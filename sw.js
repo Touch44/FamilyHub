@@ -23,17 +23,17 @@ const ALL_CACHES = [CACHE_SHELL, CACHE_DYNAMIC];
 // These are fetched and cached during install.
 // Must match actual file paths on server.
 const SHELL_FILES = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/styles/tokens.css',
-  '/styles/layout.css',
-  '/styles/components.css',
-  '/styles/dark.css',
-  '/core/events.js',
-  '/core/router.js',
-  '/core/db.js',
-  '/core/auth.js',
+  './',
+  './index.html',
+  './manifest.json',
+  './styles/tokens.css',
+  './styles/layout.css',
+  './styles/components.css',
+  './styles/dark.css',
+  './core/events.js',
+  './core/router.js',
+  './core/db.js',
+  './core/auth.js',
 ];
 
 // ── Patterns: Never Cache ─────────────────────────────────── //
@@ -124,8 +124,8 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => {
           // Offline: return cached index.html
-          return caches.match('/index.html')
-            .then(cached => cached || caches.match('/'));
+          return caches.match('./index.html')
+            .then(cached => cached || caches.match('./'));
         })
     );
     return;

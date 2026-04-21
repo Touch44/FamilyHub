@@ -13,16 +13,16 @@
   <title>FamilyHub</title>
 
   <!-- PWA Manifest -->
-  <link rel="manifest" href="/manifest.json" />
+  <link rel="manifest" href="./manifest.json" />
 
   <!-- Apple touch icon -->
-  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
   <!-- Styles (order matters: tokens → layout → components → dark) -->
-  <link rel="stylesheet" href="/styles/tokens.css" />
-  <link rel="stylesheet" href="/styles/layout.css" />
-  <link rel="stylesheet" href="/styles/components.css" />
-  <link rel="stylesheet" href="/styles/dark.css" />
+  <link rel="stylesheet" href="./styles/tokens.css" />
+  <link rel="stylesheet" href="./styles/layout.css" />
+  <link rel="stylesheet" href="./styles/components.css" />
+  <link rel="stylesheet" href="./styles/dark.css" />
 </head>
 <body>
 
@@ -658,11 +658,11 @@
    */
 
   // ── Core imports ──────────────────────────────────────────
-  import { on, emit, EVENTS }        from '/core/events.js';
+  import { on, emit, EVENTS }        from './core/events.js';
   import { navigate, wireNavItems, handleInitialHash, VIEW_KEYS }
-                                     from '/core/router.js';
-  import { initDB }                  from '/core/db.js';
-  import { initAuth }                from '/core/auth.js';
+                                     from './core/router.js';
+  import { initDB }                  from './core/db.js';
+  import { initAuth }                from './core/auth.js';
 
   // ── App initialisation ────────────────────────────────────
   async function initApp() {
@@ -873,7 +873,7 @@
       // 12. Service Worker registration (Blueprint §8.2)
       if ('serviceWorker' in navigator) {
         try {
-          const reg = await navigator.serviceWorker.register('/sw.js');
+          const reg = await navigator.serviceWorker.register('./sw.js');
           console.log('[FH] Service worker registered:', reg.scope);
 
           // Handle SW update available
