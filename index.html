@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="FamilyHub — Private family management &amp; knowledge app" />
+  <meta name="theme-color" content="#0D1B2A" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="FamilyHub" />
+
+  <title>FamilyHub</title>
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="/manifest.json" />
+
+  <!-- Apple touch icon -->
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+  <!-- Styles (order matters: tokens → layout → components → dark) -->
+  <link rel="stylesheet" href="/styles/tokens.css" />
+  <link rel="stylesheet" href="/styles/layout.css" />
+  <link rel="stylesheet" href="/styles/components.css" />
+  <link rel="stylesheet" href="/styles/dark.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     AUTH SCREEN
+     Shown on load. Hidden after successful login.
+     Blueprint §3.5 — First Run + Login flows
+     ══════════════════════════════════════════════════════════ -->
+<div id="auth-screen" role="main" aria-label="Sign in to FamilyHub">
+
+  <div class="auth-card">
+    <span class="auth-logo">FamilyHub</span>
+    <p class="auth-subtitle" id="auth-subtitle">Welcome back</p>
+
+    <!-- ── Auth Mode Tabs ── -->
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab active" role="tab" id="tab-login"
+              aria-selected="true" aria-controls="auth-form-login"
+              data-auth-tab="login">Sign In</button>
+      <button class="auth-tab" role="tab" id="tab-invite"
+              aria-selected="false" aria-controls="auth-form-invite"
+              data-auth-tab="invite">Join via Invite</button>
+    </div>
+
+    <!-- ── Login Form ── -->
+    <div id="auth-form-login" role="tabpanel" aria-labelledby="tab-login">
+      <div class="form-group">
+        <label class="form-label" for="login-username">Username</label>
+        <input class="input" type="text" id="login-username"
+               autocomplete="username" autocapitalize="none"
+               placeholder="Your username" />
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label class="form-label" for="login-password">Password</label>
+        <input class="input" type="password" id="login-password"
+               autocomplete="current-password"
+               placeholder="Your password" />
+      </div>
+      <p id="login-error" class="form-error hidden" style="margin-top: var(--space-2);"></p>
+      <button class="btn btn-primary w-full" id="login-btn"
+              style="margin-top: var(--space-5);">
+        Sign In
+      </button>
+    </div>
+
+    <!-- ── Invite Code Form ── -->
+    <div id="auth-form-invite" role="tabpanel" aria-labelledby="tab-invite" class="hidden">
+      <div class="form-group">
+        <label class="form-label" for="invite-code">Invite Code</label>
+        <input class="input" type="text" id="invite-code"
+               placeholder="XXXX-XXXX" autocapitalize="characters"
+               maxlength="9" style="letter-spacing: 0.08em; font-family: var(--font-mono);" />
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label class="form-label" for="invite-username">Choose a Username</label>
+        <input class="input" type="text" id="invite-username"
+               autocomplete="username" autocapitalize="none"
+               placeholder="username" />
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label class="form-label" for="invite-password">Choose a Password</label>
+        <input class="input" type="password" id="invite-password"
+               autocomplete="new-password" placeholder="At least 8 characters" />
+      </div>
+      <p id="invite-error" class="form-error hidden" style="margin-top: var(--space-2);"></p>
+      <button class="btn btn-primary w-full" id="invite-join-btn"
+              style="margin-top: var(--space-5);">
+        Join FamilyHub
+      </button>
+    </div>
+
+    <!-- ── First Run Form (shown when no accounts exist) ── -->
+    <div id="auth-form-firstrun" class="hidden" role="region" aria-label="First-time setup">
+      <div class="divider-label">First Time Setup</div>
+      <div class="form-group">
+        <label class="form-label required" for="firstrun-family">Family Name</label>
+        <input class="input" type="text" id="firstrun-family"
+               placeholder="e.g. The Smiths" />
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label class="form-label required" for="firstrun-displayname">Your Display Name</label>
+        <input class="input" type="text" id="firstrun-displayname"
+               placeholder="e.g. Dot" />
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label class="form-label required" for="firstrun-username">Username</label>
+        <input class="input" type="text" id="firstrun-username"
+               autocomplete="username" autocapitalize="none"
+               placeholder="Lowercase, no spaces" />
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label class="form-label required" for="firstrun-password">Password</label>
+        <input class="input" type="password" id="firstrun-password"
+               autocomplete="new-password" placeholder="At least 8 characters" />
+      </div>
+      <p id="firstrun-error" class="form-error hidden" style="margin-top: var(--space-2);"></p>
+      <button class="btn btn-primary w-full" id="firstrun-btn"
+              style="margin-top: var(--space-5);">
+        Create Family &amp; Sign In
+      </button>
+    </div>
+
+    <!-- ── v32 Migration Prompt (shown when old data detected) ── -->
+    <div id="auth-migration-prompt" class="hidden"
+         style="margin-top: var(--space-4); padding: var(--space-3); background: var(--color-info-bg);
+                border: 1px solid var(--color-info); border-radius: var(--radius-sm);">
+      <p style="font-size: var(--text-sm); color: var(--color-info-text); margin-bottom: var(--space-2);">
+        📦 Previous FamilyHub data found. Import it?
+      </p>
+      <div style="display: flex; gap: var(--space-2);">
+        <button class="btn btn-primary btn-sm" id="migration-yes-btn">Import Data</button>
+        <button class="btn btn-ghost btn-sm" id="migration-skip-btn">Skip</button>
+      </div>
+    </div>
+
+  </div><!-- /.auth-card -->
+</div><!-- /#auth-screen -->
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     APP SHELL
+     Blueprint §9.2 — CSS Grid layout
+     ══════════════════════════════════════════════════════════ -->
+<div id="app" aria-hidden="true">
+
+  <!-- ── Topbar ── -->
+  <header id="topbar" role="banner">
+    <!-- Hamburger (mobile only) -->
+    <button id="topbar-hamburger" aria-label="Open navigation" aria-expanded="false"
+            aria-controls="sidebar">
+      <svg width="18" height="14" viewBox="0 0 18 14" fill="none" aria-hidden="true">
+        <rect y="0"  width="18" height="2" rx="1" fill="currentColor"/>
+        <rect y="6"  width="18" height="2" rx="1" fill="currentColor"/>
+        <rect y="12" width="18" height="2" rx="1" fill="currentColor"/>
+      </svg>
+    </button>
+
+    <!-- App title -->
+    <span id="topbar-title" aria-label="FamilyHub home">FamilyHub</span>
+
+    <div id="topbar-spacer" aria-hidden="true"></div>
+
+    <!-- Search button (Cmd+K) -->
+    <button id="topbar-search-btn" aria-label="Search (Cmd+K)" aria-keyshortcuts="Meta+k Control+k">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M10 10L13 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span>Search</span>
+      <kbd aria-hidden="true">⌘K</kbd>
+    </button>
+
+    <!-- Sync indicator -->
+    <span id="topbar-sync-indicator" title="Sync status" aria-live="polite" aria-label="Sync status: idle">
+      ○
+    </span>
+
+    <!-- Notifications -->
+    <button id="topbar-notifications-btn" aria-label="Notifications"
+            aria-haspopup="true" aria-expanded="false"
+            aria-controls="notification-drawer">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 1.5A5 5 0 003 6.5v4.25L1.5 12h13L13 10.75V6.5A5 5 0 008 1.5z"
+              stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        <path d="M6.5 13a1.5 1.5 0 003 0" stroke="currentColor" stroke-width="1.4"/>
+      </svg>
+      <span class="notif-badge" id="notif-badge" data-count="0" aria-hidden="true"></span>
+    </button>
+
+    <!-- User menu -->
+    <button id="topbar-user-btn" aria-label="User menu" aria-haspopup="true">
+      <div class="user-avatar" id="topbar-avatar" aria-hidden="true">?</div>
+      <span id="topbar-user-name"></span>
+    </button>
+  </header>
+
+  <!-- ── Breadcrumb Row (Blueprint §9.2 — separate row below topbar) ── -->
+  <nav id="breadcrumb-row" aria-label="Breadcrumb">
+    <button id="breadcrumb-back-btn" disabled aria-label="Go back">
+      ← Back
+    </button>
+    <span id="breadcrumb-trail" style="display: flex; align-items: center; gap: var(--space-1);">
+      <!-- Populated by router.js -->
+    </span>
+  </nav>
+
+  <!-- ── Sidebar ── -->
+  <nav id="sidebar" aria-label="Main navigation">
+
+    <!-- Family name header -->
+    <div class="sidebar-family-name" id="sidebar-family-name">FamilyHub</div>
+
+    <!-- Nav items (Blueprint §4.2 — complete list) -->
+    <ul class="sidebar-nav" role="list">
+
+      <!-- Primary views -->
+      <li role="listitem">
+        <button class="nav-item" data-view="daily"
+                aria-label="Daily Review">
+          <span class="nav-item-icon" aria-hidden="true">☀️</span>
+          <span class="nav-item-label">Daily Review</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="kanban"
+                aria-label="Tasks and Kanban board">
+          <span class="nav-item-icon" aria-hidden="true">✅</span>
+          <span class="nav-item-label">Tasks</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="calendar"
+                aria-label="Calendar">
+          <span class="nav-item-icon" aria-hidden="true">📅</span>
+          <span class="nav-item-label">Calendar</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="family-wall"
+                aria-label="Family Wall">
+          <span class="nav-item-icon" aria-hidden="true">📌</span>
+          <span class="nav-item-label">Family Wall</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="family-matters"
+                aria-label="Family Matters">
+          <span class="nav-item-icon" aria-hidden="true">🏠</span>
+          <span class="nav-item-label">Family Matters</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="notes"
+                aria-label="Notes">
+          <span class="nav-item-icon" aria-hidden="true">📝</span>
+          <span class="nav-item-label">Notes</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="projects"
+                aria-label="Projects">
+          <span class="nav-item-icon" aria-hidden="true">📁</span>
+          <span class="nav-item-label">Projects</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="graph"
+                aria-label="Knowledge Graph">
+          <span class="nav-item-icon" aria-hidden="true">🔮</span>
+          <span class="nav-item-label">Knowledge Graph</span>
+        </button>
+      </li>
+
+      <!-- Tools / Trackers -->
+      <li role="listitem" aria-hidden="true">
+        <div class="sidebar-section-label">Trackers</div>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="budget"
+                aria-label="Budget and expenses">
+          <span class="nav-item-icon" aria-hidden="true">💰</span>
+          <span class="nav-item-label">Budget</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="recipes"
+                aria-label="Recipes and meal planner">
+          <span class="nav-item-icon" aria-hidden="true">🍽️</span>
+          <span class="nav-item-label">Recipes</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="documents"
+                aria-label="Documents and expiry tracker">
+          <span class="nav-item-icon" aria-hidden="true">📄</span>
+          <span class="nav-item-label">Documents</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="contacts"
+                aria-label="Contacts">
+          <span class="nav-item-icon" aria-hidden="true">📞</span>
+          <span class="nav-item-label">Contacts</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="gallery"
+                aria-label="Photo gallery">
+          <span class="nav-item-icon" aria-hidden="true">🖼️</span>
+          <span class="nav-item-label">Gallery</span>
+        </button>
+      </li>
+
+      <!-- Entity Types (Blueprint §4.2) -->
+      <li role="listitem" aria-hidden="true">
+        <div class="sidebar-section-label">── Entity Types ──</div>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="entity-type" data-entity-type="idea"
+                data-label="Ideas" aria-label="Ideas">
+          <span class="nav-item-icon" aria-hidden="true">💡</span>
+          <span class="nav-item-label">Ideas</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="entity-type" data-entity-type="research"
+                data-label="Research" aria-label="Research">
+          <span class="nav-item-icon" aria-hidden="true">🔬</span>
+          <span class="nav-item-label">Research</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="entity-type" data-entity-type="book"
+                data-label="Books" aria-label="Books">
+          <span class="nav-item-icon" aria-hidden="true">📚</span>
+          <span class="nav-item-label">Books</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="entity-type" data-entity-type="trip"
+                data-label="Trips" aria-label="Trips">
+          <span class="nav-item-icon" aria-hidden="true">✈️</span>
+          <span class="nav-item-label">Trips</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="entity-type" data-entity-type="place"
+                data-label="Places" aria-label="Places">
+          <span class="nav-item-icon" aria-hidden="true">📍</span>
+          <span class="nav-item-label">Places</span>
+        </button>
+      </li>
+      <li role="listitem">
+        <button class="nav-item" data-view="entity-type" data-entity-type="weblink"
+                data-label="Web Links" aria-label="Web Links">
+          <span class="nav-item-icon" aria-hidden="true">🔗</span>
+          <span class="nav-item-label">Web Links</span>
+        </button>
+      </li>
+
+    </ul><!-- /.sidebar-nav -->
+
+    <!-- Sidebar footer: Settings + Logout -->
+    <div class="sidebar-footer">
+      <button class="nav-item" data-view="settings" aria-label="Settings">
+        <span class="nav-item-icon" aria-hidden="true">⚙️</span>
+        <span class="nav-item-label">Settings</span>
+      </button>
+      <button class="sidebar-logout-btn" id="sidebar-logout-btn" aria-label="Sign out">
+        <span style="font-size: 1rem;" aria-hidden="true">↪</span>
+        Sign Out
+      </button>
+    </div>
+
+  </nav><!-- /#sidebar -->
+
+  <!-- Mobile sidebar overlay -->
+  <div id="sidebar-overlay" aria-hidden="true"></div>
+
+  <!-- ── Main Content ── -->
+  <main id="main" role="main" aria-label="Main content" tabindex="-1">
+
+    <!-- All view shells (empty, hidden by default) -->
+    <!-- Each activated by router.js adding class="active" -->
+
+    <!-- Daily Review -->
+    <div id="view-daily" class="view" role="region" aria-label="Daily Review"
+         aria-hidden="true">
+      <!-- Populated by views/daily.js -->
+    </div>
+
+    <!-- Kanban Task Board -->
+    <div id="view-kanban" class="view" role="region" aria-label="Tasks"
+         aria-hidden="true">
+      <!-- Populated by views/kanban.js -->
+    </div>
+
+    <!-- Calendar -->
+    <div id="view-calendar" class="view" role="region" aria-label="Calendar"
+         aria-hidden="true">
+      <!-- Populated by views/calendar.js -->
+    </div>
+
+    <!-- Family Wall -->
+    <div id="view-family-wall" class="view" role="region" aria-label="Family Wall"
+         aria-hidden="true">
+      <!-- Populated by views/family-wall.js -->
+    </div>
+
+    <!-- Family Matters -->
+    <div id="view-family-matters" class="view" role="region" aria-label="Family Matters"
+         aria-hidden="true">
+      <!-- Populated by views/family-matters.js -->
+    </div>
+
+    <!-- Notes -->
+    <div id="view-notes" class="view" role="region" aria-label="Notes"
+         aria-hidden="true">
+      <!-- Populated by views/notes.js -->
+    </div>
+
+    <!-- Projects -->
+    <div id="view-projects" class="view" role="region" aria-label="Projects"
+         aria-hidden="true">
+      <!-- Populated by views/projects.js -->
+    </div>
+
+    <!-- Knowledge Graph (Blueprint §9.2 — 3-column layout when active) -->
+    <!-- graph-canvas.js, graph filter panel, and entity panel integrate here -->
+    <div id="view-graph" class="view" role="region" aria-label="Knowledge Graph"
+         aria-hidden="true">
+      <!-- Graph filter panel, canvas, and right panel populated by views/graph-view.js -->
+    </div>
+
+    <!-- Budget -->
+    <div id="view-budget" class="view" role="region" aria-label="Budget"
+         aria-hidden="true">
+      <!-- Populated by views/budget.js -->
+    </div>
+
+    <!-- Recipes -->
+    <div id="view-recipes" class="view" role="region" aria-label="Recipes"
+         aria-hidden="true">
+      <!-- Populated by views/recipes.js -->
+    </div>
+
+    <!-- Documents -->
+    <div id="view-documents" class="view" role="region" aria-label="Documents"
+         aria-hidden="true">
+      <!-- Populated by views/documents.js -->
+    </div>
+
+    <!-- Contacts -->
+    <div id="view-contacts" class="view" role="region" aria-label="Contacts"
+         aria-hidden="true">
+      <!-- Populated by views/contacts.js -->
+    </div>
+
+    <!-- Gallery -->
+    <div id="view-gallery" class="view" role="region" aria-label="Gallery"
+         aria-hidden="true">
+      <!-- Populated by views/gallery.js -->
+    </div>
+
+    <!-- Generic Entity Type View (Ideas, Trips, Books, etc.) -->
+    <div id="view-entity-type" class="view" role="region" aria-label="Entity type view"
+         aria-hidden="true">
+      <!-- Populated by views/entity-type-view.js — receives entityType param -->
+    </div>
+
+    <!-- Settings -->
+    <div id="view-settings" class="view" role="region" aria-label="Settings"
+         aria-hidden="true">
+      <!-- Populated by views/settings.js -->
+    </div>
+
+  </main><!-- /#main -->
+
+</div><!-- /#app -->
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     GLOBAL OVERLAYS
+     Outside #app so they sit above all layout layers.
+     ══════════════════════════════════════════════════════════ -->
+
+<!-- ── Entity Panel (Blueprint §9.2 — fixed right overlay) ── -->
+<aside id="entity-panel" role="complementary" aria-label="Entity details"
+       aria-hidden="true">
+  <div id="entity-panel-header">
+    <span id="entity-panel-type-badge" class="type-badge" aria-hidden="true"></span>
+    <span id="entity-panel-title" style="font-weight: var(--weight-semibold); flex: 1;
+          font-size: var(--text-base); overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap;"></span>
+    <span class="panel-saving-indicator hidden" id="panel-saving-indicator"
+          aria-live="polite">Saving…</span>
+    <button id="entity-panel-close" aria-label="Close entity panel">✕</button>
+  </div>
+  <div id="entity-panel-body">
+    <!-- Populated dynamically by components/entity-panel.js -->
+  </div>
+</aside>
+
+<!-- ── Notification Drawer ── -->
+<div id="notification-drawer" role="dialog" aria-label="Notifications"
+     aria-modal="false">
+  <div style="display: flex; align-items: center; justify-content: space-between;
+              padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border);
+              flex-shrink: 0;">
+    <span style="font-weight: var(--weight-semibold); font-size: var(--text-sm);">Notifications</span>
+    <button class="btn-icon" id="notif-mark-all-read" aria-label="Mark all as read"
+            style="font-size: var(--text-xs); width: auto; padding: var(--space-1) var(--space-2);">
+      Mark all read
+    </button>
+  </div>
+  <div id="notification-list" class="scroll-y" style="flex: 1; overflow-y: auto;">
+    <!-- Populated by components/notification-drawer.js -->
+    <div class="empty-state" style="padding: var(--space-8);">
+      <div class="empty-state-icon">🔔</div>
+      <div class="empty-state-title">No notifications</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Global Search / Command Palette ── -->
+<div id="search-overlay" role="dialog" aria-label="Search" aria-modal="true"
+     aria-hidden="true">
+  <div id="search-palette">
+    <div style="display: flex; align-items: center; gap: var(--space-2);
+                padding: var(--space-3) var(--space-4);
+                border-bottom: 1px solid var(--color-border);">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"
+           style="color: var(--color-text-muted); flex-shrink: 0;">
+        <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M10 10L13 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input type="text" id="search-input" class="input"
+             placeholder='Search or type "> " for commands…'
+             autocomplete="off" autocorrect="off" spellcheck="false"
+             aria-label="Search"
+             style="border: none; box-shadow: none; padding: 0; font-size: var(--text-base);
+                    background: transparent;" />
+      <kbd aria-label="Escape to close" style="flex-shrink: 0;">Esc</kbd>
+    </div>
+    <div id="search-results" class="scroll-y"
+         style="overflow-y: auto; max-height: 360px;"
+         role="listbox" aria-label="Search results">
+      <!-- Populated by components/search.js -->
+    </div>
+  </div>
+</div>
+
+<!-- ── Keyboard Shortcuts Help Overlay ── -->
+<div id="shortcuts-overlay" role="dialog" aria-label="Keyboard shortcuts"
+     aria-modal="true" aria-hidden="true">
+  <div style="background: var(--color-bg); border-radius: var(--radius-lg);
+              box-shadow: var(--shadow-2xl); padding: var(--space-6);
+              width: 100%; max-width: 520px; max-height: 80dvh;
+              overflow-y: auto; margin: var(--space-4);">
+    <div style="display: flex; align-items: center; justify-content: space-between;
+                margin-bottom: var(--space-5);">
+      <h2 style="font-family: var(--font-heading); font-size: var(--text-xl);">
+        Keyboard Shortcuts
+      </h2>
+      <button class="btn-icon" id="shortcuts-close" aria-label="Close shortcuts">✕</button>
+    </div>
+    <!-- Blueprint §9.3 — all 14 shortcuts -->
+    <div style="display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4);
+                align-items: center;">
+      <kbd>⌘K</kbd>        <span class="text-sm">Open global search / command palette</span>
+      <kbd>N</kbd>          <span class="text-sm">Quick new Note (outside text field)</span>
+      <kbd>T</kbd>          <span class="text-sm">Quick new Task</span>
+      <kbd>E</kbd>          <span class="text-sm">Quick new Event</span>
+      <kbd>G</kbd>          <span class="text-sm">Go to Knowledge Graph</span>
+      <kbd>D</kbd>          <span class="text-sm">Go to Daily Review</span>
+      <kbd>K</kbd>          <span class="text-sm">Go to Kanban</span>
+      <kbd>C</kbd>          <span class="text-sm">Go to Calendar</span>
+      <kbd>Esc</kbd>        <span class="text-sm">Close entity panel / modal / search</span>
+      <kbd>⌘↵</kbd>        <span class="text-sm">Save entity form</span>
+      <kbd>⌘Z</kbd>        <span class="text-sm">Undo last entity delete (5 sec window)</span>
+      <kbd>?</kbd>          <span class="text-sm">Show this shortcuts overlay</span>
+      <kbd>Backspace</kbd>  <span class="text-sm">Graph focus mode: go back one level</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── FAB (Floating Action Button) Blueprint §5.3 ── -->
+<div id="fab" aria-label="Quick create" role="region">
+  <!-- Radial menu items (hidden until expanded) -->
+  <div class="fab-radial" role="list">
+    <div class="fab-radial-item" role="listitem">
+      <span class="fab-radial-label">Task</span>
+      <button class="fab-radial-btn" data-fab-type="task"
+              aria-label="New Task">✅</button>
+    </div>
+    <div class="fab-radial-item" role="listitem">
+      <span class="fab-radial-label">Note</span>
+      <button class="fab-radial-btn" data-fab-type="note"
+              aria-label="New Note">📝</button>
+    </div>
+    <div class="fab-radial-item" role="listitem">
+      <span class="fab-radial-label">Event</span>
+      <button class="fab-radial-btn" data-fab-type="event"
+              aria-label="New Event">📅</button>
+    </div>
+    <div class="fab-radial-item" role="listitem">
+      <span class="fab-radial-label">Post</span>
+      <button class="fab-radial-btn" data-fab-type="post"
+              aria-label="New Post">📌</button>
+    </div>
+    <div class="fab-radial-item" role="listitem">
+      <span class="fab-radial-label">Idea</span>
+      <button class="fab-radial-btn" data-fab-type="idea"
+              aria-label="New Idea">💡</button>
+    </div>
+    <div class="fab-radial-item" role="listitem">
+      <span class="fab-radial-label">More…</span>
+      <button class="fab-radial-btn" data-fab-type="more"
+              aria-label="More entity types">＋</button>
+    </div>
+  </div>
+
+  <!-- Main FAB button -->
+  <button id="fab-main-btn" aria-label="Create new entity"
+          aria-expanded="false" aria-haspopup="true">
+    ＋
+  </button>
+</div>
+
+<!-- ── Toast Container ── -->
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<!-- ── Update Banner ── -->
+<div id="update-banner" role="alert" aria-live="assertive" aria-atomic="true">
+  <span>🎉 Update available</span>
+  <button class="btn btn-primary btn-sm" id="update-reload-btn">Reload</button>
+  <button class="btn btn-ghost btn-sm" id="update-dismiss-btn"
+          style="color: rgba(255,255,255,0.7);">Later</button>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     MODULE IMPORTS
+     All core modules loaded as ES modules.
+     Blueprint §1.2 — No bundler, no framework.
+     Blueprint §13.1 — No global functions; only window.FH is global.
+     ══════════════════════════════════════════════════════════ -->
+<script type="module">
+  /**
+   * FamilyHub v2.0 — App Bootstrap
+   * This is the only <script> in index.html.
+   * All logic lives in ES modules imported below.
+   */
+
+  // ── Core imports ──────────────────────────────────────────
+  import { on, emit, EVENTS }        from '/core/events.js';
+  import { navigate, wireNavItems, handleInitialHash, VIEW_KEYS }
+                                     from '/core/router.js';
+  import { initDB }                  from '/core/db.js';
+  import { initAuth }                from '/core/auth.js';
+
+  // ── App initialisation ────────────────────────────────────
+  async function initApp() {
+    try {
+      // 1. Theme: apply saved preference before any paint
+      const savedTheme = localStorage.getItem('fh_theme') || 'light';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+
+      // 2. Wire sidebar nav items to router
+      wireNavItems();
+
+      // 3. Wire mobile hamburger
+      const hamburger = document.getElementById('topbar-hamburger');
+      const sidebar   = document.getElementById('sidebar');
+      const overlay   = document.getElementById('sidebar-overlay');
+
+      if (hamburger && sidebar && overlay) {
+        hamburger.addEventListener('click', () => {
+          const isOpen = sidebar.classList.toggle('open');
+          overlay.classList.toggle('visible', isOpen);
+          hamburger.setAttribute('aria-expanded', String(isOpen));
+        });
+        overlay.addEventListener('click', () => {
+          sidebar.classList.remove('open');
+          overlay.classList.remove('visible');
+          hamburger.setAttribute('aria-expanded', 'false');
+        });
+      }
+
+      // 4. Wire entity panel close
+      const panelClose = document.getElementById('entity-panel-close');
+      const panel      = document.getElementById('entity-panel');
+      if (panelClose && panel) {
+        panelClose.addEventListener('click', () => {
+          panel.classList.remove('open');
+          panel.setAttribute('aria-hidden', 'true');
+          emit(EVENTS.PANEL_CLOSED);
+        });
+      }
+
+      // 5. Wire search overlay (Cmd+K)
+      const searchBtn     = document.getElementById('topbar-search-btn');
+      const searchOverlay = document.getElementById('search-overlay');
+      const searchInput   = document.getElementById('search-input');
+
+      function openSearch() {
+        if (searchOverlay) {
+          searchOverlay.classList.add('open');
+          searchOverlay.setAttribute('aria-hidden', 'false');
+        }
+        if (searchInput) {
+          searchInput.value = '';
+          searchInput.focus();
+        }
+      }
+
+      function closeSearch() {
+        if (searchOverlay) {
+          searchOverlay.classList.remove('open');
+          searchOverlay.setAttribute('aria-hidden', 'true');
+        }
+      }
+
+      if (searchBtn) searchBtn.addEventListener('click', openSearch);
+
+      if (searchOverlay) {
+        searchOverlay.addEventListener('click', (e) => {
+          if (e.target === searchOverlay) closeSearch();
+        });
+      }
+
+      // 6. Wire notifications drawer
+      const notifsBtn    = document.getElementById('topbar-notifications-btn');
+      const notifsDrawer = document.getElementById('notification-drawer');
+
+      if (notifsBtn && notifsDrawer) {
+        notifsBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isOpen = notifsDrawer.classList.toggle('open');
+          notifsBtn.setAttribute('aria-expanded', String(isOpen));
+        });
+        document.addEventListener('click', (e) => {
+          if (!notifsDrawer.contains(e.target) && e.target !== notifsBtn) {
+            notifsDrawer.classList.remove('open');
+            notifsBtn.setAttribute('aria-expanded', 'false');
+          }
+        });
+      }
+
+      // 7. FAB toggle
+      const fab        = document.getElementById('fab');
+      const fabMainBtn = document.getElementById('fab-main-btn');
+
+      if (fab && fabMainBtn) {
+        fabMainBtn.addEventListener('click', () => {
+          const expanded = fab.classList.toggle('fab-expanded');
+          fabMainBtn.setAttribute('aria-expanded', String(expanded));
+        });
+
+        // Close FAB on click outside
+        document.addEventListener('click', (e) => {
+          if (!fab.contains(e.target)) {
+            fab.classList.remove('fab-expanded');
+            fabMainBtn.setAttribute('aria-expanded', 'false');
+          }
+        });
+
+        // FAB radial item clicks
+        fab.querySelectorAll('.fab-radial-btn[data-fab-type]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const type = btn.dataset.fabType;
+            fab.classList.remove('fab-expanded');
+            fabMainBtn.setAttribute('aria-expanded', 'false');
+            // Entity form will be opened by components/fab.js in Phase 1
+            emit('fab:create', { entityType: type });
+          });
+        });
+      }
+
+      // 8. Keyboard shortcuts (Blueprint §9.3)
+      document.addEventListener('keydown', (e) => {
+        const inTextField = e.target.matches('input, textarea, [contenteditable="true"], select');
+
+        // Cmd+K — search (always)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+          e.preventDefault();
+          openSearch();
+          return;
+        }
+
+        // Esc — close overlays
+        if (e.key === 'Escape') {
+          closeSearch();
+          if (panel) {
+            panel.classList.remove('open');
+            panel.setAttribute('aria-hidden', 'true');
+            emit(EVENTS.PANEL_CLOSED);
+          }
+          const shortcutsOverlay = document.getElementById('shortcuts-overlay');
+          if (shortcutsOverlay) {
+            shortcutsOverlay.classList.remove('open');
+            shortcutsOverlay.setAttribute('aria-hidden', 'true');
+          }
+          if (fab) {
+            fab.classList.remove('fab-expanded');
+            if (fabMainBtn) fabMainBtn.setAttribute('aria-expanded', 'false');
+          }
+          return;
+        }
+
+        if (inTextField) return;
+
+        // Single-key shortcuts
+        switch (e.key) {
+          case 'n': case 'N': emit('fab:create', { entityType: 'note' });  break;
+          case 't': case 'T': emit('fab:create', { entityType: 'task' });  break;
+          case 'e': case 'E': emit('fab:create', { entityType: 'event' }); break;
+          case 'g': case 'G': navigate(VIEW_KEYS.GRAPH);            break;
+          case 'd': case 'D': navigate(VIEW_KEYS.DAILY);            break;
+          case 'k': case 'K': navigate(VIEW_KEYS.KANBAN);           break;
+          case 'c': case 'C': navigate(VIEW_KEYS.CALENDAR);         break;
+          case '?':
+            e.preventDefault();
+            const so = document.getElementById('shortcuts-overlay');
+            if (so) {
+              so.classList.add('open');
+              so.setAttribute('aria-hidden', 'false');
+            }
+            break;
+        }
+
+        // Cmd+Z — undo delete
+        if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+          emit('entity:undoDelete');
+        }
+      });
+
+      // 9. Shortcuts overlay close button
+      const shortcutsClose = document.getElementById('shortcuts-close');
+      if (shortcutsClose) {
+        shortcutsClose.addEventListener('click', () => {
+          const so = document.getElementById('shortcuts-overlay');
+          if (so) {
+            so.classList.remove('open');
+            so.setAttribute('aria-hidden', 'true');
+          }
+        });
+      }
+
+      // 10. Auth screen tab switching (shell-level — auth.js also wires its own forms)
+      document.querySelectorAll('[data-auth-tab]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tab = btn.dataset.authTab;
+          document.querySelectorAll('[data-auth-tab]').forEach(b => {
+            b.classList.toggle('active', b.dataset.authTab === tab);
+            b.setAttribute('aria-selected', String(b.dataset.authTab === tab));
+          });
+          document.getElementById('auth-form-login')?.classList.toggle('hidden', tab !== 'login');
+          document.getElementById('auth-form-invite')?.classList.toggle('hidden', tab !== 'invite');
+        });
+      });
+
+      // 11. Initialise IndexedDB then Auth (the real boot sequence)
+      //     auth.js determines: first-run | login screen | resume session
+      await initDB();
+      await initAuth();
+
+      // 12. Service Worker registration (Blueprint §8.2)
+      if ('serviceWorker' in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.register('/sw.js');
+          console.log('[FH] Service worker registered:', reg.scope);
+
+          // Handle SW update available
+          reg.addEventListener('updatefound', () => {
+            const newSW = reg.installing;
+            if (!newSW) return;
+            newSW.addEventListener('statechange', () => {
+              if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                const banner = document.getElementById('update-banner');
+                if (banner) banner.classList.add('visible');
+              }
+            });
+          });
+        } catch (err) {
+          console.warn('[FH] Service worker registration failed:', err);
+        }
+      }
+
+      // 13. Update banner actions
+      const reloadBtn  = document.getElementById('update-reload-btn');
+      const dismissBtn = document.getElementById('update-dismiss-btn');
+      if (reloadBtn) {
+        reloadBtn.addEventListener('click', () => {
+          navigator.serviceWorker?.controller?.postMessage({ type: 'SKIP_WAITING' });
+          window.location.reload();
+        });
+      }
+      if (dismissBtn) {
+        dismissBtn.addEventListener('click', () => {
+          const banner = document.getElementById('update-banner');
+          if (banner) banner.classList.remove('visible');
+        });
+      }
+
+      // 14. Open entity panel on PANEL_OPENED event (wired by entity-panel.js in Phase 1)
+      on(EVENTS.PANEL_OPENED, ({ entityType, entityId } = {}) => {
+        if (panel) {
+          panel.classList.add('open');
+          panel.setAttribute('aria-hidden', 'false');
+        }
+      });
+
+      // 15. Theme toggle listener
+      on(EVENTS.THEME_CHANGED, ({ theme }) => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('fh_theme', theme);
+      });
+
+      // 16. Migration skip button (migration-yes wired by auth.js)
+      document.getElementById('migration-skip-btn')?.addEventListener('click', () => {
+        document.getElementById('auth-migration-prompt')?.classList.add('hidden');
+      });
+
+      // ── Expose minimal global for inter-module debugging ──
+      // Blueprint §13.1: ONLY window.FH is allowed on window.*
+      window.FH = { version: '2.0.0', emit, on };
+
+      console.log('[FH] Boot sequence complete.');
+
+    } catch (err) {
+      console.error('[FH] Fatal init error:', err);
+    }
+  }
+
+  // Run after DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
+</script>
+
+</body>
+</html>

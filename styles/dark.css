@@ -1,0 +1,224 @@
+/* ============================================================
+   FamilyHub v2.0 — Dark Mode Overrides (dark.css)
+   Blueprint §9.1 — dark column values applied via [data-theme="dark"]
+   ============================================================ */
+
+[data-theme="dark"] {
+
+  /* ── Brand / Accent ──────────────────────────────────────── */
+  --color-brand:        #E2E8F0;
+  --color-accent:       #14B8A6;
+
+  /* ── Background / Surface (Blueprint §9.1 dark values) ───── */
+  --color-bg:           #0F172A;
+  --color-surface:      #1E293B;
+  --color-surface-2:    #334155;
+
+  /* ── Borders ─────────────────────────────────────────────── */
+  --color-border:       #334155;
+  --color-border-focus: #14B8A6;
+
+  /* ── Typography ──────────────────────────────────────────── */
+  --color-text:         #F1F5F9;
+  --color-text-muted:   #94A3B8;
+  --color-text-inverse: #0F172A;
+  --color-text-accent:  #14B8A6;
+  --color-text-link:    #14B8A6;
+
+  /* ── Status Colours (same hue, dark context) ─────────────── */
+  --color-danger-bg:    rgba(239, 68, 68, 0.12);
+  --color-danger-text:  #FCA5A5;
+  --color-warning-bg:   rgba(245, 158, 11, 0.12);
+  --color-warning-text: #FCD34D;
+  --color-success-bg:   rgba(16, 185, 129, 0.12);
+  --color-success-text: #6EE7B7;
+  --color-info-bg:      rgba(59, 130, 246, 0.12);
+  --color-info-text:    #93C5FD;
+
+  /* ── Sidebar (remains dark — slightly lighter than bg) ────── */
+  --color-sidebar-bg:          #080F1E;
+  --color-sidebar-text:        #64748B;
+  --color-sidebar-text-active: #E2E8F0;
+  --color-sidebar-hover:       rgba(255,255,255,0.05);
+  --color-sidebar-active:      rgba(20,184,166,0.18);
+  --color-sidebar-border:      rgba(255,255,255,0.06);
+  --color-sidebar-accent:      #14B8A6;
+
+  /* ── Topbar ──────────────────────────────────────────────── */
+  --color-topbar-bg:     #1E293B;
+  --color-topbar-border: #334155;
+
+  /* ── Shadows (darken significantly in dark mode) ─────────── */
+  --shadow-xs:           0 1px 2px rgba(0, 0, 0, 0.20);
+  --shadow-sm:           0 1px 3px rgba(0, 0, 0, 0.30), 0 1px 2px rgba(0, 0, 0, 0.20);
+  --shadow-md:           0 4px 6px rgba(0, 0, 0, 0.30), 0 2px 4px rgba(0, 0, 0, 0.25);
+  --shadow-lg:           0 10px 15px rgba(0, 0, 0, 0.35), 0 4px 6px rgba(0, 0, 0, 0.25);
+  --shadow-xl:           0 20px 25px rgba(0, 0, 0, 0.40), 0 10px 10px rgba(0, 0, 0, 0.25);
+  --shadow-2xl:          0 25px 50px rgba(0, 0, 0, 0.60);
+  --shadow-inner:        inset 0 2px 4px rgba(0, 0, 0, 0.25);
+  --shadow-focus:        0 0 0 3px rgba(20, 184, 166, 0.30);
+  --shadow-focus-danger: 0 0 0 3px rgba(239, 68, 68, 0.30);
+  --shadow-panel:        -4px 0 24px rgba(0, 0, 0, 0.40);
+  --shadow-sidebar:      2px 0 12px rgba(0, 0, 0, 0.40);
+
+  /* ── Scrollbar ───────────────────────────────────────────── */
+  --scrollbar-thumb:    #334155;
+
+  /* ── Overlay ─────────────────────────────────────────────── */
+  --color-overlay:       rgba(0, 0, 0, 0.70);
+  --color-overlay-light: rgba(0, 0, 0, 0.40);
+}
+
+/* ── Component Overrides ─────────────────────────────────── */
+[data-theme="dark"] body {
+  color-scheme: dark;
+}
+
+/* Select arrow — dark mode needs lighter arrow */
+[data-theme="dark"] .select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394A3B8' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* Skeleton shimmer uses dark surfaces */
+[data-theme="dark"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 25%,
+    var(--color-surface-2) 37%,
+    var(--color-surface) 63%
+  );
+  background-size: 400px 100%;
+}
+
+/* Auth card dark */
+[data-theme="dark"] .auth-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+/* Kanban card dark */
+[data-theme="dark"] .card {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+/* Code / mono blocks */
+[data-theme="dark"] kbd {
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* FAB glow adjustment */
+[data-theme="dark"] #fab-main-btn {
+  box-shadow: var(--shadow-lg), 0 4px 16px rgba(20, 184, 166, 0.35);
+}
+
+/* Tooltip */
+[data-theme="dark"] [data-tooltip]::after {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+/* Search palette */
+[data-theme="dark"] #search-palette {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+/* Update banner */
+[data-theme="dark"] #update-banner {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Collapsible */
+[data-theme="dark"] .collapsible {
+  border-color: var(--color-border);
+}
+
+[data-theme="dark"] .collapsible-header {
+  background: var(--color-surface);
+}
+
+[data-theme="dark"] .collapsible-header:hover {
+  background: var(--color-surface-2);
+}
+
+[data-theme="dark"] .collapsible-body {
+  background: var(--color-bg);
+}
+
+/* Filter pills */
+[data-theme="dark"] .filter-pill {
+  background: var(--color-surface);
+}
+
+/* Status badges — already using CSS variables, auto-handled */
+
+/* Input / select / textarea */
+[data-theme="dark"] .input,
+[data-theme="dark"] .select,
+[data-theme="dark"] .textarea {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+[data-theme="dark"] .input::placeholder,
+[data-theme="dark"] .textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Auth screen keeps deep dark brand bg regardless */
+[data-theme="dark"] #auth-screen {
+  background: #080F1E;
+}
+
+/* Dropdown menu */
+[data-theme="dark"] .dropdown-menu {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+[data-theme="dark"] .dropdown-item:hover {
+  background: var(--color-surface-2);
+}
+
+/* Modal */
+[data-theme="dark"] .modal {
+  background: var(--color-surface);
+}
+
+/* Notification drawer */
+[data-theme="dark"] #notification-drawer {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+/* Entity panel */
+[data-theme="dark"] #entity-panel {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+/* Topbar search button */
+[data-theme="dark"] #topbar-search-btn {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* Scrollbars — dark */
+[data-theme="dark"] #main::-webkit-scrollbar-thumb,
+[data-theme="dark"] #sidebar::-webkit-scrollbar-thumb,
+[data-theme="dark"] #entity-panel-body::-webkit-scrollbar-thumb {
+  background: var(--color-surface-2);
+}
+
+/* Drag handle on mobile entity panel */
+[data-theme="dark"] #entity-panel::before {
+  background: var(--color-surface-2);
+}
