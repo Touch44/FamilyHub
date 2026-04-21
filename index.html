@@ -664,6 +664,7 @@
   import { initDB }                  from './core/db.js';
   import { initAuth, isLoggedIn, isFirstRun, doFirstRun, doLogin, doLogout }
                                      from './core/auth.js';
+  import { initGraphEngine }         from './core/graph-engine.js';
 
   // ── App initialisation ────────────────────────────────────
   async function initApp() {
@@ -868,6 +869,7 @@
       //     isLoggedIn(), isFirstRun(), doFirstRun(), doLogin(), doLogout()
       //     are all available here if any top-level wiring needs them.
       await initDB();
+      await initGraphEngine();
       await initAuth();
 
       // 11. Service Worker registration (Blueprint §8.2)
