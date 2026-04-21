@@ -179,6 +179,20 @@ export function canGoBack()    { return _cursor > 0; }
 /** @returns {boolean} */
 export function canGoForward() { return _cursor < _history.length - 1; }
 
+/**
+ * showView — alias for navigate(). Satisfies Blueprint §4.1 naming convention
+ * used by views that call showView(viewKey) or showView(viewKey, params).
+ * Identical behaviour: hides all views, shows target, pushes history,
+ * updates URL hash, updates breadcrumbs, fires EVENTS.VIEW_CHANGED.
+ *
+ * @param {string} viewKey
+ * @param {Object} [params={}]
+ * @param {string} [label]
+ */
+export function showView(viewKey, params = {}, label) {
+  navigate(viewKey, params, label);
+}
+
 // ── Internal Helpers ─────────────────────────────────────── //
 
 /**

@@ -122,12 +122,13 @@ export async function initAuth() {
     }
   }
 
-  // 3. No valid session — check if first run and seed default admin
+  // 3. No valid session — check if first run or returning user
   const auth = await getSetting('auth');
   if (!auth?.accounts?.length) {
-    // Seed the hardcoded default admin (dot / retracy) on first run
-    await _seedDefaultAdmin();
-    _showLoginForm();
+    // Genuine first run: no accounts exist — show setup form so the family
+    // can choose their own name, username and password.
+    // (The default-admin seed path is removed; doFirstRun() creates the account.)
+    _showFirstRunForm();
   } else {
     _showLoginForm();
   }
