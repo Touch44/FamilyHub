@@ -34,6 +34,7 @@ const SHELL_FILES = [
   './core/router.js',
   './core/db.js',
   './core/auth.js',
+  './core/graph-engine.js',
 ];
 
 // ── Patterns: Never Cache ─────────────────────────────────── //
@@ -209,8 +210,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body:    data.body || '',
-    icon:    '/icons/icon-192.png',
-    badge:   '/icons/icon-192.png',
+    icon:    './icons/icon-192.png',
+    badge:   './icons/icon-192.png',
     tag:     data.tag || 'familyhub-general',
     data:    data.url || '/',
     actions: data.actions || [],
