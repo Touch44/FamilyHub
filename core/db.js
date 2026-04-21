@@ -1,303 +1,390 @@
 /**
  * FamilyHub v2.0 — core/db.js
- * All IndexedDB operations: entity CRUD, edge CRUD, query engine, export/import
+ * Complete IndexedDB data layer using the idb library
  * Blueprint §2.1 (schema), §2.2 (settings keys), §10.1 (public API)
  *
- * Uses the native IndexedDB API directly — no external library.
- * The idb library (mentioned in Blueprint §1.1) is omitted here in favour of
- * a thin promise wrapper to keep the file self-contained and dependency-free,
- * consistent with the "no bundler, no framework" principle.
+ * Public API (all named exports):
+ *   initDB, uid,
+ *   getEntity, getEntitiesByType, queryEntities, saveEntity, deleteEntity,
+ *   getEdge, getEdgesFrom, getEdgesTo, saveEdge, deleteEdge,
+ *   getSetting, setSetting, getSettings,
+ *   exportAll, importAll,
+ *   readV32Data, isMigrationComplete, setMigrationComplete,
+ *   countByType, getStorageUsage
  */
 
-'use strict';
+// ── idb library (UMD build loaded via dynamic import from CDN) ── //
+// We load idb once and cache it. Using dynamic import keeps this file
+// a standard ES module with no build step required.
+const IDB_CDN = 'https://cdn.jsdelivr.net/npm/idb@8/build/umd.js';
+
+/** @type {Promise<object>|null} — singleton idb load promise */
+let _idbPromise = null;
+
+/**
+ * Load the idb library from CDN (once only).
+ * Falls back gracefully to raw IndexedDB wrapper if CDN is unavailable.
+ * @returns {Promise<{openDB: Function}>}
+ */
+async function _loadIdb() {
+  if (_idbPromise) return _idbPromise;
+
+  _idbPromise = (async () => {
+    try {
+      // idb UMD build attaches to globalThis.idb when loaded as a script.
+      // Dynamic import of a UMD module via CDN requires a small shim:
+      // we fetch the source and evaluate it using a Blob URL so it runs
+      // in module scope without a <script> tag.
+      if (globalThis.idb?.openDB) return globalThis.idb;
+
+      const res  = await fetch(IDB_CDN);
+      if (!res.ok) throw new Error(`idb CDN fetch failed: ${res.status}`);
+      const text = await res.text();
+      const blob = new Blob([text], { type: 'application/javascript' });
+      const url  = URL.createObjectURL(blob);
+
+      // Import the blob URL — UMD attaches to globalThis.idb
+      await import(/* @vite-ignore */ url);
+      URL.revokeObjectURL(url);
+
+      if (globalThis.idb?.openDB) return globalThis.idb;
+      throw new Error('idb did not attach to globalThis after load');
+
+    } catch (err) {
+      console.warn('[db] idb CDN load failed, using raw IDB fallback:', err.message);
+      // Return a minimal openDB shim so the rest of the module works
+      return { openDB: _rawOpenDB };
+    }
+  })();
+
+  return _idbPromise;
+}
 
 // ── Constants ────────────────────────────────────────────── //
 
-/** Blueprint §1.1 — IndexedDB database name */
+/** Blueprint §1.1 */
 export const DB_NAME    = 'familyhub_v2';
-
-/** Blueprint §14.3 — increment ONLY when schema changes */
+/** Blueprint §14.3 — increment ONLY on schema changes */
 export const DB_VERSION = 1;
 
-/** Store names (Blueprint §2.1) */
 export const STORES = Object.freeze({
   ENTITIES: 'entities',
   EDGES:    'edges',
   SETTINGS: 'settings',
 });
 
-// ── Internal state ───────────────────────────────────────── //
+// ── DB instance ──────────────────────────────────────────── //
 
-/** @type {IDBDatabase|null} */
+/** @type {object|null} — idb DB instance */
 let _db = null;
 
-// ── Initialisation ───────────────────────────────────────── //
+// ── Schema upgrade callback ───────────────────────────────── //
 
 /**
- * Open (or create) the IndexedDB database.
- * Creates all three object stores with indexes on first run.
- * Blueprint §10.1 — initDB()
- *
- * @returns {Promise<IDBDatabase>}
+ * Called by idb's openDB when the DB version is new.
+ * Blueprint §2.1 — three stores, all indexes.
  */
-export function initDB() {
-  if (_db) return Promise.resolve(_db);
+function _upgrade(db, oldVersion, newVersion, transaction) {
+  console.log(`[db] Upgrading schema v${oldVersion} → v${newVersion}`);
 
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+  // ── entities ─────────────────────────────────────────────
+  if (!db.objectStoreNames.contains(STORES.ENTITIES)) {
+    const es = db.createObjectStore(STORES.ENTITIES, { keyPath: 'id' });
+    es.createIndex('type',      'type',      { unique: false });
+    es.createIndex('createdAt', 'createdAt', { unique: false });
+    es.createIndex('updatedAt', 'updatedAt', { unique: false });
+    es.createIndex('createdBy', 'createdBy', { unique: false });
+  }
 
-    request.onerror = () => {
-      console.error('[db] Failed to open IndexedDB:', request.error);
-      reject(request.error);
-    };
+  // ── edges ─────────────────────────────────────────────────
+  if (!db.objectStoreNames.contains(STORES.EDGES)) {
+    const eds = db.createObjectStore(STORES.EDGES, { keyPath: 'id' });
+    eds.createIndex('fromId',          'fromId',              { unique: false });
+    eds.createIndex('toId',            'toId',                { unique: false });
+    eds.createIndex('relation',        'relation',            { unique: false });
+    eds.createIndex('fromId_relation', ['fromId', 'relation'],{ unique: false });
+    eds.createIndex('toId_relation',   ['toId',   'relation'],{ unique: false });
+  }
 
-    request.onsuccess = () => {
-      _db = request.result;
-
-      // Handle unexpected DB closure (e.g. browser storage eviction)
-      _db.onclose = () => {
-        console.warn('[db] IndexedDB connection closed unexpectedly — will reopen on next call');
-        _db = null;
-      };
-
-      _db.onerror = (e) => {
-        console.error('[db] IndexedDB error:', e.target.error);
-      };
-
-      console.log('[db] IndexedDB opened:', DB_NAME, 'v' + DB_VERSION);
-      resolve(_db);
-    };
-
-    // Blueprint §2.1 — onupgradeneeded: create stores + indexes
-    request.onupgradeneeded = (event) => {
-      const db      = event.target.result;
-      const oldVer  = event.oldVersion;
-
-      console.log('[db] Upgrading schema from v' + oldVer + ' to v' + DB_VERSION);
-
-      // ── entities store ────────────────────────────────────
-      // {id, type, createdAt, updatedAt, createdBy, deleted, ...props}
-      if (!db.objectStoreNames.contains(STORES.ENTITIES)) {
-        const entityStore = db.createObjectStore(STORES.ENTITIES, { keyPath: 'id' });
-        entityStore.createIndex('type',       'type',       { unique: false });
-        entityStore.createIndex('createdAt',  'createdAt',  { unique: false });
-        entityStore.createIndex('updatedAt',  'updatedAt',  { unique: false });
-        entityStore.createIndex('createdBy',  'createdBy',  { unique: false });
-        console.log('[db] Created store: entities');
-      }
-
-      // ── edges store ───────────────────────────────────────
-      // {id, fromId, fromType, toId, toType, relation, createdAt, createdBy}
-      if (!db.objectStoreNames.contains(STORES.EDGES)) {
-        const edgeStore = db.createObjectStore(STORES.EDGES, { keyPath: 'id' });
-        edgeStore.createIndex('fromId',           'fromId',             { unique: false });
-        edgeStore.createIndex('toId',             'toId',               { unique: false });
-        edgeStore.createIndex('relation',         'relation',           { unique: false });
-        edgeStore.createIndex('fromId_relation',  ['fromId','relation'],{ unique: false });
-        edgeStore.createIndex('toId_relation',    ['toId','relation'],  { unique: false });
-        console.log('[db] Created store: edges');
-      }
-
-      // ── settings store ────────────────────────────────────
-      // {key, value}
-      if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
-        db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
-        console.log('[db] Created store: settings');
-      }
-    };
-  });
+  // ── settings ──────────────────────────────────────────────
+  if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
+    db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
+  }
 }
 
-// ── Internal helpers ─────────────────────────────────────── //
+// ── Initialisation (Blueprint §10.1) ─────────────────────── //
 
 /**
- * Get the open DB instance, opening it if needed.
- * @returns {Promise<IDBDatabase>}
+ * Open (or return the cached) idb database instance.
+ * Must be called before any other db function.
+ * @returns {Promise<object>} idb DB instance
+ */
+export async function initDB() {
+  if (_db) return _db;
+
+  try {
+    const { openDB } = await _loadIdb();
+
+    _db = await openDB(DB_NAME, DB_VERSION, {
+      upgrade: _upgrade,
+      blocked() {
+        console.warn('[db] DB upgrade blocked by another tab. Please close other tabs and reload.');
+      },
+      blocking() {
+        // Another tab wants a newer version — close our connection gracefully
+        console.warn('[db] This tab is blocking a DB upgrade. Closing connection.');
+        _db?.close();
+        _db = null;
+      },
+      terminated() {
+        console.warn('[db] DB connection terminated unexpectedly.');
+        _db = null;
+      },
+    });
+
+    console.log(`[db] IndexedDB opened: ${DB_NAME} v${DB_VERSION}`);
+    return _db;
+
+  } catch (err) {
+    console.error('[db] initDB failed:', err);
+    throw err;
+  }
+}
+
+/**
+ * Return the cached DB, opening it if needed.
+ * Internal helper used by all CRUD functions.
  */
 async function _getDB() {
   if (_db) return _db;
   return initDB();
 }
 
-/**
- * Wrap an IDBRequest in a Promise.
- * @template T
- * @param {IDBRequest} request
- * @returns {Promise<T>}
- */
-function _req(request) {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror   = () => reject(request.error);
-  });
-}
-
-/**
- * Run a callback inside a transaction, return its result.
- * @param {string|string[]} stores
- * @param {'readonly'|'readwrite'} mode
- * @param {(tx: IDBTransaction) => Promise<*>} fn
- */
-async function _tx(stores, mode, fn) {
-  const db = await _getDB();
-  const tx = db.transaction(stores, mode);
-
-  return new Promise((resolve, reject) => {
-    let result;
-    tx.oncomplete = () => resolve(result);
-    tx.onerror    = () => reject(tx.error);
-    tx.onabort    = () => reject(new Error('Transaction aborted'));
-
-    // Run the callback — it should call resolve via _req
-    fn(tx).then(r => { result = r; }).catch(err => {
-      tx.abort();
-      reject(err);
-    });
-  });
-}
-
 // ── ID generation ─────────────────────────────────────────── //
 
 /**
  * Generate a unique ID.
- * Format: 8-char timestamp base36 + 8-char random base36 = 16 chars
+ * Uses crypto.randomUUID() when available; falls back to a
+ * timestamp + random hex string.
  * @returns {string}
  */
 export function uid() {
-  const ts  = Date.now().toString(36).padStart(8, '0');
-  const rnd = Math.random().toString(36).slice(2, 10).padStart(8, '0');
-  return ts + rnd;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback: 8-char base36 timestamp + 12-char random hex
+  const ts  = Date.now().toString(36);
+  const rnd = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+                   .map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${ts}-${rnd}`;
 }
 
-// ── Entity CRUD (Blueprint §10.1) ─────────────────────────── //
+// ── Events helper ─────────────────────────────────────────── //
+
+/**
+ * Fire an app event via events.js.
+ * Dynamic import avoids circular dependency at module load time.
+ * Errors are swallowed so a missing event bus never breaks a save.
+ * @param {string} name
+ * @param {*} data
+ */
+async function _emit(name, data) {
+  try {
+    const { emit } = await import('./events.js');
+    emit(name, data);
+  } catch (err) {
+    console.warn('[db] Could not emit event', name, err);
+  }
+}
+
+// ── Dirty queue helper ────────────────────────────────────── //
+
+/**
+ * Append an ID to a dirty queue array in the settings store.
+ * Deduplicates. Uses the provided idb transaction to stay atomic.
+ * @param {object} tx     - idb transaction
+ * @param {string} key    - 'dirtyEntities' | 'dirtyEdges'
+ * @param {string} id
+ */
+async function _addToDirtyQueue(tx, key, id) {
+  try {
+    const rec   = await tx.objectStore(STORES.SETTINGS).get(key);
+    const queue = rec?.value ?? [];
+    if (!queue.includes(id)) {
+      queue.push(id);
+      await tx.objectStore(STORES.SETTINGS).put({ key, value: queue });
+    }
+  } catch (err) {
+    console.error(`[db] _addToDirtyQueue(${key}) failed:`, err);
+  }
+}
+
+// ── Audit log helper ──────────────────────────────────────── //
+
+/**
+ * Append one entry to the auditLog array in settings.
+ * Caps at 2000 entries. Blueprint §9.6.
+ * @param {object} tx
+ * @param {object} entry
+ */
+async function _appendAuditLog(tx, entry) {
+  try {
+    const rec = await tx.objectStore(STORES.SETTINGS).get('auditLog');
+    const log = rec?.value ?? [];
+    log.push({
+      id:          uid(),
+      action:      entry.action      ?? null,
+      entityType:  entry.entityType  ?? null,
+      entityId:    entry.entityId    ?? null,
+      entityTitle: entry.entityTitle ?? null,
+      field:       entry.field       ?? null,
+      oldValue:    entry.oldValue    ?? null,
+      newValue:    entry.newValue    ?? null,
+      byAccountId: entry.byAccountId ?? null,
+      at:          entry.at          ?? new Date().toISOString(),
+    });
+    const pruned = log.length > 2000 ? log.slice(-2000) : log;
+    await tx.objectStore(STORES.SETTINGS).put({ key: 'auditLog', value: pruned });
+  } catch (err) {
+    console.error('[db] _appendAuditLog failed:', err);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// ENTITY CRUD  (Blueprint §10.1)
+// ════════════════════════════════════════════════════════════
 
 /**
  * Get a single entity by ID.
  * Returns null if not found or soft-deleted.
  * @param {string} id
- * @returns {Promise<Object|null>}
+ * @returns {Promise<object|null>}
  */
 export async function getEntity(id) {
-  const db     = await _getDB();
-  const tx     = db.transaction(STORES.ENTITIES, 'readonly');
-  const store  = tx.objectStore(STORES.ENTITIES);
-  const entity = await _req(store.get(id));
-  if (!entity || entity.deleted) return null;
-  return entity;
+  try {
+    const db     = await _getDB();
+    const entity = await db.get(STORES.ENTITIES, id);
+    if (!entity || entity.deleted) return null;
+    return entity;
+  } catch (err) {
+    console.error('[db] getEntity failed:', err);
+    return null;
+  }
 }
 
 /**
  * Get all non-deleted entities of a given type.
  * Blueprint §10.1 — getEntitiesByType(type)
  * @param {string} type
- * @returns {Promise<Object[]>}
+ * @returns {Promise<object[]>}
  */
 export async function getEntitiesByType(type) {
-  const db    = await _getDB();
-  const tx    = db.transaction(STORES.ENTITIES, 'readonly');
-  const store = tx.objectStore(STORES.ENTITIES);
-  const index = store.index('type');
-  const all   = await _req(index.getAll(type));
-  return all.filter(e => !e.deleted);
+  try {
+    const db  = await _getDB();
+    const all = await db.getAllFromIndex(STORES.ENTITIES, 'type', type);
+    return all.filter(e => !e.deleted);
+  } catch (err) {
+    console.error('[db] getEntitiesByType failed:', err);
+    return [];
+  }
 }
 
 /**
  * Query entities with optional filters.
  * Blueprint §10.1 — queryEntities(filter)
  *
- * @param {Object} filter
- * @param {string}   [filter.type]        - Entity type key
- * @param {string}   [filter.createdBy]   - Account/member ID
- * @param {string[]} [filter.tags]        - Tag entity IDs (match any)
- * @param {Object}   [filter.dateRange]   - { field, from, to } — ISO date strings
- * @param {boolean}  [filter.includeDeleted=false]
- * @returns {Promise<Object[]>}
+ * @param {object}   [filter={}]
+ * @param {string}   [filter.type]             Entity type key
+ * @param {string}   [filter.createdBy]         Account/member ID
+ * @param {object}   [filter.dateRange]         { field, from, to } ISO strings
+ * @param {boolean}  [filter.includeDeleted]    Default false
+ * @returns {Promise<object[]>}
  */
 export async function queryEntities(filter = {}) {
-  const db    = await _getDB();
-  const tx    = db.transaction(STORES.ENTITIES, 'readonly');
-  const store = tx.objectStore(STORES.ENTITIES);
+  try {
+    const db = await _getDB();
+    let results;
 
-  let results;
-
-  // Use type index if type filter provided — much faster than full scan
-  if (filter.type) {
-    results = await _req(store.index('type').getAll(filter.type));
-  } else {
-    results = await _req(store.getAll());
-  }
-
-  // Apply remaining filters
-  return results.filter(entity => {
-    if (!filter.includeDeleted && entity.deleted) return false;
-    if (filter.createdBy && entity.createdBy !== filter.createdBy) return false;
-
-    if (filter.dateRange) {
-      const { field, from, to } = filter.dateRange;
-      const val = entity[field];
-      if (!val) return false;
-      if (from && val < from) return false;
-      if (to   && val > to)   return false;
+    if (filter.type) {
+      // Use type index — much faster than full scan
+      results = await db.getAllFromIndex(STORES.ENTITIES, 'type', filter.type);
+    } else {
+      results = await db.getAll(STORES.ENTITIES);
     }
 
-    return true;
-  });
+    return results.filter(entity => {
+      if (!filter.includeDeleted && entity.deleted) return false;
+      if (filter.createdBy && entity.createdBy !== filter.createdBy) return false;
+      if (filter.dateRange) {
+        const { field, from, to } = filter.dateRange;
+        const val = entity[field];
+        if (!val) return false;
+        if (from && val < from) return false;
+        if (to   && val > to)   return false;
+      }
+      return true;
+    });
+  } catch (err) {
+    console.error('[db] queryEntities failed:', err);
+    return [];
+  }
 }
 
 /**
  * Save (create or update) an entity.
- * Sets updatedAt. Adds to dirtyEntities queue for Notion sync.
- * Fires 'entity:saved' event.
+ * - Generates id if missing
+ * - Sets createdAt (new) and updatedAt (always)
+ * - Adds id to dirtyEntities queue
+ * - Fires 'entity:saved' event
  * Blueprint §10.1 — saveEntity(entity)
  *
- * @param {Object} entity - Must have .type. .id will be generated if missing.
- * @param {string} [byAccountId] - Who is making the change (for audit log)
- * @returns {Promise<Object>} The saved entity
+ * @param {object} entity        Must have .type
+ * @param {string} [byAccountId]
+ * @returns {Promise<object>} The saved entity
  */
 export async function saveEntity(entity, byAccountId) {
-  if (!entity.type) throw new Error('[db] saveEntity: entity.type is required');
+  try {
+    if (!entity?.type) throw new Error('saveEntity: entity.type is required');
 
-  const now    = new Date().toISOString();
-  const isNew  = !entity.id;
-  const saved  = {
-    ...entity,
-    id:        entity.id || uid(),
-    createdAt: entity.createdAt || now,
-    updatedAt: now,
-    createdBy: entity.createdBy || byAccountId || null,
-  };
+    const now   = new Date().toISOString();
+    const isNew = !entity.id;
+    const saved = {
+      ...entity,
+      id:        entity.id || uid(),
+      createdAt: entity.createdAt || now,
+      updatedAt: now,
+      createdBy: entity.createdBy || byAccountId || null,
+    };
 
-  const db    = await _getDB();
-  const tx    = db.transaction([STORES.ENTITIES, STORES.SETTINGS], 'readwrite');
-  const store = tx.objectStore(STORES.ENTITIES);
-  const sett  = tx.objectStore(STORES.SETTINGS);
+    const db = await _getDB();
+    const tx = db.transaction([STORES.ENTITIES, STORES.SETTINGS], 'readwrite');
 
-  // Write entity
-  await _req(store.put(saved));
+    await tx.objectStore(STORES.ENTITIES).put(saved);
+    await _addToDirtyQueue(tx, 'dirtyEntities', saved.id);
+    await _appendAuditLog(tx, {
+      action:      isNew ? 'create' : 'update',
+      entityType:  saved.type,
+      entityId:    saved.id,
+      entityTitle: saved.title || saved.name || saved.id,
+      byAccountId,
+      at:          now,
+    });
 
-  // Add to dirty queue for Notion sync
-  await _addToDirtyQueue(sett, 'dirtyEntities', saved.id);
+    await tx.done;
 
-  // Write audit log entry
-  await _appendAuditLog(sett, {
-    action:      isNew ? 'create' : 'update',
-    entityType:  saved.type,
-    entityId:    saved.id,
-    entityTitle: saved.title || saved.name || saved.id,
-    byAccountId: byAccountId || null,
-    at:          now,
-  });
+    await _emit('entity:saved', { entity: saved, isNew });
+    return saved;
 
-  await _txComplete(tx);
-
-  // Fire event (import events.js lazily to avoid circular deps)
-  _fireEvent('entity:saved', { entity: saved, isNew });
-
-  return saved;
+  } catch (err) {
+    console.error('[db] saveEntity failed:', err);
+    throw err;
+  }
 }
 
 /**
- * Soft-delete an entity. Sets deleted=true, removes all edges.
+ * Soft-delete an entity.
+ * Sets deleted:true, removes all edges from/to this entity.
+ * Fires 'entity:deleted' event.
  * Blueprint §10.1 — deleteEntity(id)
  *
  * @param {string} id
@@ -305,57 +392,67 @@ export async function saveEntity(entity, byAccountId) {
  * @returns {Promise<void>}
  */
 export async function deleteEntity(id, byAccountId) {
-  const db   = await _getDB();
-  const now  = new Date().toISOString();
+  try {
+    const db = await _getDB();
 
-  // Get entity first for audit log
-  const entity = await getEntity(id);
-  if (!entity) return;
+    // Read current entity for audit log title
+    const entity = await db.get(STORES.ENTITIES, id);
+    if (!entity) return;
 
-  const tx      = db.transaction([STORES.ENTITIES, STORES.EDGES, STORES.SETTINGS], 'readwrite');
-  const eStore  = tx.objectStore(STORES.ENTITIES);
-  const edStore = tx.objectStore(STORES.EDGES);
-  const sStore  = tx.objectStore(STORES.SETTINGS);
+    const now = new Date().toISOString();
+    const tx  = db.transaction([STORES.ENTITIES, STORES.EDGES, STORES.SETTINGS], 'readwrite');
 
-  // Soft delete
-  await _req(eStore.put({ ...entity, deleted: true, updatedAt: now }));
+    // Soft delete
+    await tx.objectStore(STORES.ENTITIES).put({
+      ...entity,
+      deleted:   true,
+      updatedAt: now,
+    });
 
-  // Remove all edges involving this entity
-  const fromEdges = await _req(edStore.index('fromId').getAll(id));
-  const toEdges   = await _req(edStore.index('toId').getAll(id));
-  for (const edge of [...fromEdges, ...toEdges]) {
-    await _req(edStore.delete(edge.id));
+    // Remove all edges where this entity is fromId or toId
+    const fromEdges = await tx.objectStore(STORES.EDGES).index('fromId').getAll(id);
+    const toEdges   = await tx.objectStore(STORES.EDGES).index('toId').getAll(id);
+    for (const edge of [...fromEdges, ...toEdges]) {
+      await tx.objectStore(STORES.EDGES).delete(edge.id);
+    }
+
+    await _addToDirtyQueue(tx, 'dirtyEntities', id);
+    await _appendAuditLog(tx, {
+      action:      'delete',
+      entityType:  entity.type,
+      entityId:    id,
+      entityTitle: entity.title || entity.name || id,
+      byAccountId,
+      at:          now,
+    });
+
+    await tx.done;
+
+    await _emit('entity:deleted', { id, entityType: entity.type });
+
+  } catch (err) {
+    console.error('[db] deleteEntity failed:', err);
+    throw err;
   }
-
-  // Add to dirty queue
-  await _addToDirtyQueue(sStore, 'dirtyEntities', id);
-
-  // Audit log
-  await _appendAuditLog(sStore, {
-    action:      'delete',
-    entityType:  entity.type,
-    entityId:    id,
-    entityTitle: entity.title || entity.name || id,
-    byAccountId: byAccountId || null,
-    at:          now,
-  });
-
-  await _txComplete(tx);
-
-  _fireEvent('entity:deleted', { id, entityType: entity.type });
 }
 
-// ── Edge CRUD (Blueprint §10.1) ───────────────────────────── //
+// ════════════════════════════════════════════════════════════
+// EDGE CRUD  (Blueprint §10.1)
+// ════════════════════════════════════════════════════════════
 
 /**
  * Get a single edge by ID.
  * @param {string} id
- * @returns {Promise<Object|null>}
+ * @returns {Promise<object|null>}
  */
 export async function getEdge(id) {
-  const db  = await _getDB();
-  const tx  = db.transaction(STORES.EDGES, 'readonly');
-  return _req(tx.objectStore(STORES.EDGES).get(id));
+  try {
+    const db = await _getDB();
+    return await db.get(STORES.EDGES, id) ?? null;
+  } catch (err) {
+    console.error('[db] getEdge failed:', err);
+    return null;
+  }
 }
 
 /**
@@ -363,17 +460,19 @@ export async function getEdge(id) {
  * Blueprint §10.1 — getEdgesFrom(entityId, relation?)
  * @param {string} entityId
  * @param {string} [relation]
- * @returns {Promise<Object[]>}
+ * @returns {Promise<object[]>}
  */
 export async function getEdgesFrom(entityId, relation) {
-  const db    = await _getDB();
-  const tx    = db.transaction(STORES.EDGES, 'readonly');
-  const store = tx.objectStore(STORES.EDGES);
-
-  if (relation) {
-    return _req(store.index('fromId_relation').getAll([entityId, relation]));
+  try {
+    const db = await _getDB();
+    if (relation) {
+      return await db.getAllFromIndex(STORES.EDGES, 'fromId_relation', [entityId, relation]);
+    }
+    return await db.getAllFromIndex(STORES.EDGES, 'fromId', entityId);
+  } catch (err) {
+    console.error('[db] getEdgesFrom failed:', err);
+    return [];
   }
-  return _req(store.index('fromId').getAll(entityId));
 }
 
 /**
@@ -381,308 +480,263 @@ export async function getEdgesFrom(entityId, relation) {
  * Blueprint §10.1 — getEdgesTo(entityId, relation?)
  * @param {string} entityId
  * @param {string} [relation]
- * @returns {Promise<Object[]>}
+ * @returns {Promise<object[]>}
  */
 export async function getEdgesTo(entityId, relation) {
-  const db    = await _getDB();
-  const tx    = db.transaction(STORES.EDGES, 'readonly');
-  const store = tx.objectStore(STORES.EDGES);
-
-  if (relation) {
-    return _req(store.index('toId_relation').getAll([entityId, relation]));
+  try {
+    const db = await _getDB();
+    if (relation) {
+      return await db.getAllFromIndex(STORES.EDGES, 'toId_relation', [entityId, relation]);
+    }
+    return await db.getAllFromIndex(STORES.EDGES, 'toId', entityId);
+  } catch (err) {
+    console.error('[db] getEdgesTo failed:', err);
+    return [];
   }
-  return _req(store.index('toId').getAll(entityId));
 }
 
 /**
  * Save (create or update) an edge.
+ * - Adds id to dirtyEdges queue
+ * - Fires 'edge:saved' event
  * Blueprint §10.1 — saveEdge(edge)
  *
- * @param {Object} edge - {fromId, fromType, toId, toType, relation, ...meta}
+ * @param {object} edge   Must have fromId, toId, relation
  * @param {string} [byAccountId]
- * @returns {Promise<Object>} The saved edge
+ * @returns {Promise<object>} The saved edge
  */
 export async function saveEdge(edge, byAccountId) {
-  if (!edge.fromId || !edge.toId || !edge.relation) {
-    throw new Error('[db] saveEdge: fromId, toId, and relation are required');
+  try {
+    if (!edge?.fromId || !edge?.toId || !edge?.relation) {
+      throw new Error('saveEdge: fromId, toId, and relation are required');
+    }
+
+    const now   = new Date().toISOString();
+    const saved = {
+      ...edge,
+      id:        edge.id || uid(),
+      createdAt: edge.createdAt || now,
+      createdBy: edge.createdBy || byAccountId || null,
+    };
+
+    const db = await _getDB();
+    const tx = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
+
+    await tx.objectStore(STORES.EDGES).put(saved);
+    await _addToDirtyQueue(tx, 'dirtyEdges', saved.id);
+    await _appendAuditLog(tx, {
+      action:      'link',
+      entityType:  saved.fromType  || null,
+      entityId:    saved.fromId,
+      field:       saved.relation,
+      newValue:    saved.toId,
+      byAccountId,
+      at:          now,
+    });
+
+    await tx.done;
+
+    await _emit('edge:saved', { edge: saved });
+    return saved;
+
+  } catch (err) {
+    console.error('[db] saveEdge failed:', err);
+    throw err;
   }
-
-  const now   = new Date().toISOString();
-  const saved = {
-    ...edge,
-    id:        edge.id || uid(),
-    createdAt: edge.createdAt || now,
-    createdBy: edge.createdBy || byAccountId || null,
-  };
-
-  const db    = await _getDB();
-  const tx    = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
-  const store = tx.objectStore(STORES.EDGES);
-  const sett  = tx.objectStore(STORES.SETTINGS);
-
-  await _req(store.put(saved));
-  await _addToDirtyQueue(sett, 'dirtyEdges', saved.id);
-
-  await _appendAuditLog(sett, {
-    action:     'link',
-    entityId:   saved.fromId,
-    entityType: saved.fromType,
-    field:      saved.relation,
-    newValue:   saved.toId,
-    byAccountId,
-    at:         now,
-  });
-
-  await _txComplete(tx);
-
-  _fireEvent('edge:saved', { edge: saved });
-  return saved;
 }
 
 /**
  * Delete an edge by ID.
+ * Fires 'edge:deleted' event.
  * Blueprint §10.1 — deleteEdge(id)
  * @param {string} id
  * @param {string} [byAccountId]
  * @returns {Promise<void>}
  */
 export async function deleteEdge(id, byAccountId) {
-  const db   = await _getDB();
-  const tx   = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
-  const store = tx.objectStore(STORES.EDGES);
-  const sett  = tx.objectStore(STORES.SETTINGS);
+  try {
+    const db   = await _getDB();
+    const edge = await db.get(STORES.EDGES, id);
+    if (!edge) return;
 
-  const edge = await _req(store.get(id));
-  if (!edge) return;
+    const now = new Date().toISOString();
+    const tx  = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
 
-  await _req(store.delete(id));
-  await _appendAuditLog(sett, {
-    action:     'unlink',
-    entityId:   edge.fromId,
-    entityType: edge.fromType,
-    field:      edge.relation,
-    oldValue:   edge.toId,
-    byAccountId,
-    at:         new Date().toISOString(),
-  });
+    await tx.objectStore(STORES.EDGES).delete(id);
+    await _appendAuditLog(tx, {
+      action:      'unlink',
+      entityType:  edge.fromType || null,
+      entityId:    edge.fromId,
+      field:       edge.relation,
+      oldValue:    edge.toId,
+      byAccountId,
+      at:          now,
+    });
 
-  await _txComplete(tx);
-  _fireEvent('edge:deleted', { id, edge });
+    await tx.done;
+
+    await _emit('edge:deleted', { id, edge });
+
+  } catch (err) {
+    console.error('[db] deleteEdge failed:', err);
+    throw err;
+  }
 }
 
-// ── Settings Store (Blueprint §10.1) ─────────────────────── //
+// ════════════════════════════════════════════════════════════
+// SETTINGS  (Blueprint §10.1)
+// ════════════════════════════════════════════════════════════
 
 /**
  * Get a value from the settings store.
- * Returns undefined if the key doesn't exist.
- * Blueprint §10.1 — getSetting(key)
+ * Returns undefined if key doesn't exist.
  * @param {string} key
  * @returns {Promise<*>}
  */
 export async function getSetting(key) {
-  const db   = await _getDB();
-  const tx   = db.transaction(STORES.SETTINGS, 'readonly');
-  const rec  = await _req(tx.objectStore(STORES.SETTINGS).get(key));
-  return rec?.value;
+  try {
+    const db  = await _getDB();
+    const rec = await db.get(STORES.SETTINGS, key);
+    return rec?.value;
+  } catch (err) {
+    console.error(`[db] getSetting(${key}) failed:`, err);
+    return undefined;
+  }
 }
 
 /**
  * Save a value to the settings store.
- * Blueprint §10.1 — setSetting(key, value)
  * @param {string} key
  * @param {*} value
  * @returns {Promise<void>}
  */
 export async function setSetting(key, value) {
-  const db  = await _getDB();
-  const tx  = db.transaction(STORES.SETTINGS, 'readwrite');
-  await _req(tx.objectStore(STORES.SETTINGS).put({ key, value }));
-  await _txComplete(tx);
+  try {
+    const db = await _getDB();
+    await db.put(STORES.SETTINGS, { key, value });
+  } catch (err) {
+    console.error(`[db] setSetting(${key}) failed:`, err);
+    throw err;
+  }
 }
 
 /**
  * Get multiple settings at once.
  * @param {string[]} keys
- * @returns {Promise<Object>} {key: value, ...}
+ * @returns {Promise<object>} { key: value, ... }
  */
 export async function getSettings(keys) {
-  const db    = await _getDB();
-  const tx    = db.transaction(STORES.SETTINGS, 'readonly');
-  const store = tx.objectStore(STORES.SETTINGS);
-  const result = {};
-  await Promise.all(keys.map(async key => {
-    const rec = await _req(store.get(key));
-    result[key] = rec?.value;
-  }));
-  return result;
+  try {
+    const db     = await _getDB();
+    const tx     = db.transaction(STORES.SETTINGS, 'readonly');
+    const result = {};
+    await Promise.all(keys.map(async key => {
+      const rec     = await tx.objectStore(STORES.SETTINGS).get(key);
+      result[key]   = rec?.value;
+    }));
+    await tx.done;
+    return result;
+  } catch (err) {
+    console.error('[db] getSettings failed:', err);
+    return {};
+  }
 }
 
-// ── Export / Import (Blueprint §10.1) ────────────────────── //
+// ════════════════════════════════════════════════════════════
+// EXPORT / IMPORT  (Blueprint §10.1)
+// ════════════════════════════════════════════════════════════
 
 /**
  * Export all data as a JSON-serialisable object.
+ * Strips auth and session from the settings export (per-device, not portable).
  * Blueprint §10.1 — exportAll()
- * @returns {Promise<{entities: Object[], edges: Object[], settings: Object}>}
+ * @returns {Promise<{entities: object[], edges: object[], settings: object}>}
  */
 export async function exportAll() {
-  const db        = await _getDB();
-  const tx        = db.transaction([STORES.ENTITIES, STORES.EDGES, STORES.SETTINGS], 'readonly');
-  const eStore    = tx.objectStore(STORES.ENTITIES);
-  const edStore   = tx.objectStore(STORES.EDGES);
-  const sStore    = tx.objectStore(STORES.SETTINGS);
+  try {
+    const db = await _getDB();
 
-  const [entities, edges, settingsArr] = await Promise.all([
-    _req(eStore.getAll()),
-    _req(edStore.getAll()),
-    _req(sStore.getAll()),
-  ]);
+    const [entities, edges, settingsArr] = await Promise.all([
+      db.getAll(STORES.ENTITIES),
+      db.getAll(STORES.EDGES),
+      db.getAll(STORES.SETTINGS),
+    ]);
 
-  // Convert settings array to object — omit sensitive auth data
-  const settings = {};
-  for (const { key, value } of settingsArr) {
-    // Skip auth and session — these are per-device, not portable
-    if (key === 'auth' || key === 'session') continue;
-    settings[key] = value;
+    const settings = {};
+    for (const { key, value } of settingsArr) {
+      if (key === 'auth' || key === 'session') continue;
+      settings[key] = value;
+    }
+
+    return {
+      exportedAt: new Date().toISOString(),
+      appVersion: '2.0.0',
+      entities,
+      edges,
+      settings,
+    };
+
+  } catch (err) {
+    console.error('[db] exportAll failed:', err);
+    throw err;
   }
-
-  return {
-    exportedAt: new Date().toISOString(),
-    appVersion: '2.0.0',
-    entities,
-    edges,
-    settings,
-  };
 }
 
 /**
  * Import data from an exported JSON object.
  * Merges by ID — does not duplicate existing records.
  * Blueprint §10.1 — importAll(data)
- * @param {{entities: Object[], edges: Object[], settings: Object}} data
+ *
+ * @param {{entities: object[], edges: object[], settings: object}} data
  * @returns {Promise<{entitiesImported: number, edgesImported: number}>}
  */
 export async function importAll(data) {
-  if (!data || !Array.isArray(data.entities)) {
-    throw new Error('[db] importAll: invalid data format');
-  }
-
-  const db  = await _getDB();
-  const tx  = db.transaction([STORES.ENTITIES, STORES.EDGES, STORES.SETTINGS], 'readwrite');
-  const eS  = tx.objectStore(STORES.ENTITIES);
-  const edS = tx.objectStore(STORES.EDGES);
-  const sS  = tx.objectStore(STORES.SETTINGS);
-
-  let entitiesImported = 0;
-  let edgesImported    = 0;
-
-  // Merge entities by ID (put = upsert)
-  for (const entity of data.entities || []) {
-    if (!entity.id || !entity.type) continue;
-    await _req(eS.put(entity));
-    entitiesImported++;
-  }
-
-  // Merge edges by ID
-  for (const edge of data.edges || []) {
-    if (!edge.id || !edge.fromId || !edge.toId) continue;
-    await _req(edS.put(edge));
-    edgesImported++;
-  }
-
-  // Merge settings (skip auth/session)
-  for (const [key, value] of Object.entries(data.settings || {})) {
-    if (key === 'auth' || key === 'session') continue;
-    await _req(sS.put({ key, value }));
-  }
-
-  await _txComplete(tx);
-
-  console.log('[db] Import complete:', entitiesImported, 'entities,', edgesImported, 'edges');
-  return { entitiesImported, edgesImported };
-}
-
-// ── Utility helpers ───────────────────────────────────────── //
-
-/**
- * Add an ID to a dirty queue array in settings.
- * Creates the array if it doesn't exist. Deduplicates.
- * @param {IDBObjectStore} settingsStore - Open readwrite store
- * @param {string} key - 'dirtyEntities' or 'dirtyEdges'
- * @param {string} id
- */
-async function _addToDirtyQueue(settingsStore, key, id) {
-  const rec   = await _req(settingsStore.get(key));
-  const queue = rec?.value ?? [];
-  if (!queue.includes(id)) {
-    queue.push(id);
-    await _req(settingsStore.put({ key, value: queue }));
-  }
-}
-
-/**
- * Append an entry to the audit log in settings.
- * Blueprint §9.6 — auditLog stored in settings key 'auditLog'
- * Keeps last 2000 entries (pruned on each write).
- * @param {IDBObjectStore} settingsStore
- * @param {Object} entry
- */
-async function _appendAuditLog(settingsStore, entry) {
-  const rec = await _req(settingsStore.get('auditLog'));
-  const log = rec?.value ?? [];
-
-  log.push({
-    id:         uid(),
-    action:     entry.action,
-    entityType: entry.entityType || null,
-    entityId:   entry.entityId   || null,
-    entityTitle:entry.entityTitle|| null,
-    field:      entry.field      || null,
-    oldValue:   entry.oldValue   || null,
-    newValue:   entry.newValue   || null,
-    byAccountId:entry.byAccountId|| null,
-    at:         entry.at         || new Date().toISOString(),
-  });
-
-  // Prune to last 2000 entries
-  const pruned = log.length > 2000 ? log.slice(log.length - 2000) : log;
-  await _req(settingsStore.put({ key: 'auditLog', value: pruned }));
-}
-
-/**
- * Wrap a transaction's oncomplete/onerror in a Promise.
- * @param {IDBTransaction} tx
- */
-function _txComplete(tx) {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror    = () => reject(tx.error);
-    tx.onabort    = () => reject(new Error('Transaction aborted'));
-  });
-}
-
-/**
- * Fire an app event without a hard import of events.js
- * to avoid circular dependencies at module load time.
- * Uses dynamic import cached after first call.
- */
-let _eventsModule = null;
-async function _fireEvent(eventName, data) {
   try {
-    if (!_eventsModule) {
-      _eventsModule = await import('./events.js');
+    if (!data || !Array.isArray(data.entities)) {
+      throw new Error('importAll: invalid data format — expected { entities[], edges[], settings{} }');
     }
-    _eventsModule.emit(eventName, data);
+
+    const db = await _getDB();
+    const tx = db.transaction([STORES.ENTITIES, STORES.EDGES, STORES.SETTINGS], 'readwrite');
+
+    let entitiesImported = 0;
+    let edgesImported    = 0;
+
+    for (const entity of data.entities ?? []) {
+      if (!entity.id || !entity.type) continue;
+      await tx.objectStore(STORES.ENTITIES).put(entity);
+      entitiesImported++;
+    }
+
+    for (const edge of data.edges ?? []) {
+      if (!edge.id || !edge.fromId || !edge.toId) continue;
+      await tx.objectStore(STORES.EDGES).put(edge);
+      edgesImported++;
+    }
+
+    for (const [key, value] of Object.entries(data.settings ?? {})) {
+      if (key === 'auth' || key === 'session') continue;
+      await tx.objectStore(STORES.SETTINGS).put({ key, value });
+    }
+
+    await tx.done;
+
+    console.log(`[db] Import complete: ${entitiesImported} entities, ${edgesImported} edges`);
+    return { entitiesImported, edgesImported };
+
   } catch (err) {
-    console.warn('[db] Could not fire event', eventName, err);
+    console.error('[db] importAll failed:', err);
+    throw err;
   }
 }
 
-// ── v32 Migration Support (Blueprint §11.1) ──────────────── //
+// ════════════════════════════════════════════════════════════
+// v32 MIGRATION SUPPORT  (Blueprint §11.1)
+// ════════════════════════════════════════════════════════════
 
 /**
- * Read v32 localStorage data and return it for migration.
- * Returns null if no v32 data found.
- * @returns {Object|null}
+ * Read v32 localStorage data. Returns null if not found.
+ * @returns {object|null}
  */
 export function readV32Data() {
   try {
@@ -694,12 +748,11 @@ export function readV32Data() {
 }
 
 /**
- * Check if migration has already been completed.
+ * Check whether v32 → v2.0 migration has already run.
  * @returns {Promise<boolean>}
  */
 export async function isMigrationComplete() {
-  const val = await getSetting('migrationComplete');
-  return val === true;
+  return (await getSetting('migrationComplete')) === true;
 }
 
 /**
@@ -710,27 +763,32 @@ export async function setMigrationComplete() {
   await setSetting('migrationComplete', true);
 }
 
-// ── Diagnostic helpers (development only) ────────────────── //
+// ════════════════════════════════════════════════════════════
+// DIAGNOSTICS
+// ════════════════════════════════════════════════════════════
 
 /**
- * Count all entities by type. Useful for debugging.
- * @returns {Promise<Object>} {typeKey: count, ...}
+ * Count all non-deleted entities grouped by type.
+ * @returns {Promise<object>} { typeKey: count }
  */
 export async function countByType() {
-  const db    = await _getDB();
-  const tx    = db.transaction(STORES.ENTITIES, 'readonly');
-  const all   = await _req(tx.objectStore(STORES.ENTITIES).getAll());
-  const counts = {};
-  for (const e of all) {
-    if (e.deleted) continue;
-    counts[e.type] = (counts[e.type] || 0) + 1;
+  try {
+    const db    = await _getDB();
+    const all   = await db.getAll(STORES.ENTITIES);
+    const counts = {};
+    for (const e of all) {
+      if (e.deleted) continue;
+      counts[e.type] = (counts[e.type] || 0) + 1;
+    }
+    return counts;
+  } catch (err) {
+    console.error('[db] countByType failed:', err);
+    return {};
   }
-  return counts;
 }
 
 /**
- * Get the total size approximation of the database (in bytes).
- * Uses the StorageManager API if available.
+ * Return storage usage estimate via StorageManager API.
  * @returns {Promise<{used: number, quota: number}|null>}
  */
 export async function getStorageUsage() {
@@ -741,4 +799,118 @@ export async function getStorageUsage() {
   } catch {
     return null;
   }
+}
+
+// ════════════════════════════════════════════════════════════
+// RAW IDB FALLBACK
+// Used when the idb CDN is unreachable (e.g. full offline first load).
+// Implements the same openDB interface that idb exposes.
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Minimal openDB shim matching the idb API surface used above.
+ * Supports: db.get, db.getAll, db.getAllFromIndex, db.put,
+ *           db.transaction → objectStore → {get, getAll, put, delete, index}
+ *           tx.done
+ * @param {string} name
+ * @param {number} version
+ * @param {object} callbacks  { upgrade, blocked, blocking, terminated }
+ * @returns {Promise<object>}
+ */
+function _rawOpenDB(name, version, callbacks = {}) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(name, version);
+
+    req.onerror   = () => reject(req.error);
+    req.onblocked = () => callbacks.blocked?.();
+
+    req.onupgradeneeded = (event) => {
+      callbacks.upgrade?.(
+        req.result,
+        event.oldVersion,
+        event.newVersion,
+        req.transaction
+      );
+    };
+
+    req.onsuccess = () => {
+      const idbDB = req.result;
+
+      idbDB.onclose       = () => callbacks.terminated?.();
+      idbDB.onversionchange = () => {
+        callbacks.blocking?.();
+        idbDB.close();
+      };
+
+      // Wrap idbDB in the idb-compatible API
+      resolve(_wrapDB(idbDB));
+    };
+  });
+}
+
+/** Wrap a raw IDBDatabase so it looks like an idb DB object. */
+function _wrapDB(idbDB) {
+  const wrap = {
+    close: () => idbDB.close(),
+
+    get: (store, key) => _idbReq(idbDB
+      .transaction(store, 'readonly')
+      .objectStore(store)
+      .get(key)),
+
+    getAll: (store, query) => _idbReq(idbDB
+      .transaction(store, 'readonly')
+      .objectStore(store)
+      .getAll(query)),
+
+    getAllFromIndex: (store, indexName, query) => _idbReq(idbDB
+      .transaction(store, 'readonly')
+      .objectStore(store)
+      .index(indexName)
+      .getAll(query)),
+
+    put: (store, value) => _idbReq(idbDB
+      .transaction(store, 'readwrite')
+      .objectStore(store)
+      .put(value)),
+
+    delete: (store, key) => _idbReq(idbDB
+      .transaction(store, 'readwrite')
+      .objectStore(store)
+      .delete(key)),
+
+    transaction: (stores, mode) => {
+      const tx    = idbDB.transaction(stores, mode);
+      const txWrap = {
+        done: new Promise((res, rej) => {
+          tx.oncomplete = () => res();
+          tx.onerror    = () => rej(tx.error);
+          tx.onabort    = () => rej(new Error('Transaction aborted'));
+        }),
+        objectStore: (name) => {
+          const store = tx.objectStore(name);
+          return {
+            put:    (value) => _idbReq(store.put(value)),
+            get:    (key)   => _idbReq(store.get(key)),
+            getAll: (query) => _idbReq(store.getAll(query)),
+            delete: (key)   => _idbReq(store.delete(key)),
+            index:  (idx)   => ({
+              getAll: (query) => _idbReq(store.index(idx).getAll(query)),
+              get:    (query) => _idbReq(store.index(idx).get(query)),
+            }),
+          };
+        },
+      };
+      return txWrap;
+    },
+  };
+  return wrap;
+}
+
+/** Promisify a raw IDBRequest. */
+function _idbReq(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror   = () => reject(request.error);
+  });
 }
