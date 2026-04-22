@@ -24,7 +24,7 @@
  */
 
 import { registerView }              from '../core/router.js';
-import { getEntitiesByType }         from '../core/db.js';
+import { getEntitiesByType, saveEntity } from '../core/db.js';
 import { emit, on, EVENTS }         from '../core/events.js';
 
 // ── Constants ─────────────────────────────────────────────── //
@@ -435,6 +435,35 @@ function _buildHeader(container) {
 
   titleRow.append(navLeft, title, navRight, todayBtn);
 
+  // Quick-add buttons — always visible in all sub-views
+  const quickBtns = document.createElement('div');
+  quickBtns.className = 'cal-quick-btns';
+
+  const addEventBtn = document.createElement('button');
+  addEventBtn.className = 'btn btn-primary btn-sm';
+  addEventBtn.textContent = '+ Event';
+  addEventBtn.addEventListener('click', () => {
+    const dateStr = _toDateStr(_anchorDate);
+    emit(EVENTS.FAB_CREATE, {
+      entityType: 'event',
+      prefill: { date: dateStr + 'T12:00' },
+    });
+  });
+
+  const addTaskBtn = document.createElement('button');
+  addTaskBtn.className = 'btn btn-ghost btn-sm';
+  addTaskBtn.textContent = '+ Task';
+  addTaskBtn.addEventListener('click', () => {
+    const dateStr = _toDateStr(_anchorDate);
+    emit(EVENTS.FAB_CREATE, {
+      entityType: 'task',
+      prefill: { dueDate: dateStr },
+    });
+  });
+
+  quickBtns.append(addEventBtn, addTaskBtn);
+  titleRow.appendChild(quickBtns);
+
   // Mode toggle row
   const toggleRow = document.createElement('div');
   toggleRow.className = 'cal-toggle-row';
@@ -600,6 +629,9 @@ function _buildMonthView(container, dateMap) {
       _showDayPopover(cell, cellDate, cellDateStr, items);
     });
 
+    // Drop target for drag-and-drop rescheduling
+    _makeDropTarget(cell, cellDateStr);
+
     daysCells.appendChild(cell);
   }
 
@@ -704,6 +736,11 @@ function _showDayPopover(anchorEl, dateObj, dateStr, items) {
 
       // Color accent bar
       row.style.borderLeftColor = _getColor(item.entityType) || 'var(--color-border)';
+
+      // Make draggable (except recurring dateEntities)
+      if (item.entityType !== 'dateEntity') {
+        _makeDraggable(row, item.entityType, item.entity.id);
+      }
 
       // Click → open entity panel
       row.addEventListener('click', (e) => {
@@ -833,6 +870,7 @@ function _buildWeekView(container, dateMap) {
       chip.className = 'cal-week-chip task-chip';
       chip.textContent = t.entity.title || 'Task';
       chip.title = t.entity.title || 'Task';
+      _makeDraggable(chip, 'task', t.entity.id);
       chip.addEventListener('click', (e) => {
         e.stopPropagation();
         emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: t.entity.id });
@@ -859,6 +897,9 @@ function _buildWeekView(container, dateMap) {
       });
       allDayCell.appendChild(chip);
     }
+
+    // Drop target for all-day row
+    _makeDropTarget(allDayCell, ds);
 
     allDayRow.appendChild(allDayCell);
   }
@@ -896,6 +937,9 @@ function _buildWeekView(container, dateMap) {
           prefill: { date: `${ds}T${hourStr}:00` },
         });
       });
+
+      // Drop target — reschedule to this day+hour
+      _makeDropTarget(slot, ds, h);
 
       hourRow.appendChild(slot);
     }
@@ -1016,6 +1060,9 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
 
       block.append(blockTitle, blockTime);
 
+      // Make event blocks draggable
+      _makeDraggable(block, item.entityType, item.entity.id);
+
       block.addEventListener('click', (e) => {
         e.stopPropagation();
         emit(EVENTS.PANEL_OPENED, {
@@ -1109,6 +1156,11 @@ function _buildAgendaView(container, dateMap) {
       contentCol.append(itemTitle, itemMeta);
       row.append(timeCol, contentCol);
 
+      // Make draggable (except recurring dateEntities)
+      if (item.entityType !== 'dateEntity') {
+        _makeDraggable(row, item.entityType, item.entity.id);
+      }
+
       row.addEventListener('click', () => {
         emit(EVENTS.PANEL_OPENED, {
           entityType: item.entityType,
@@ -1120,6 +1172,10 @@ function _buildAgendaView(container, dateMap) {
     }
 
     group.appendChild(itemList);
+
+    // Make the entire day group a drop target
+    _makeDropTarget(group, ds);
+
     agenda.appendChild(group);
   }
 
@@ -1131,6 +1187,108 @@ function _buildAgendaView(container, dateMap) {
   }
 
   container.appendChild(agenda);
+}
+
+// ── Drag-and-Drop infrastructure ──────────────────────────── //
+
+/**
+ * Make an element draggable carrying entity + type payload.
+ * Used on: month popover items, week event blocks, week all-day chips, agenda items.
+ */
+function _makeDraggable(el, entityType, entityId) {
+  el.setAttribute('draggable', 'true');
+  el.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({ entityType, entityId }));
+    e.dataTransfer.effectAllowed = 'move';
+    el.classList.add('cal-dragging');
+    // Store globally so drop targets can highlight
+    _dragPayload = { entityType, entityId };
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('cal-dragging');
+    _dragPayload = null;
+    // Remove all drop highlights
+    document.querySelectorAll('.cal-drop-target').forEach(t => t.classList.remove('cal-drop-target'));
+  });
+}
+
+/** Current drag payload — set during dragstart, cleared on dragend */
+let _dragPayload = null;
+
+/**
+ * Make a cell a drop target that reschedules the dragged entity to `newDateStr`.
+ * For week time slots, also accepts `newHour` (integer).
+ */
+function _makeDropTarget(el, newDateStr, newHour) {
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.classList.add('cal-drop-target');
+  });
+  el.addEventListener('dragleave', () => {
+    el.classList.remove('cal-drop-target');
+  });
+  el.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    el.classList.remove('cal-drop-target');
+    let payload;
+    try {
+      payload = JSON.parse(e.dataTransfer.getData('text/plain'));
+    } catch { return; }
+    if (!payload?.entityId || !payload?.entityType) return;
+    await _rescheduleEntity(payload.entityType, payload.entityId, newDateStr, newHour);
+  });
+}
+
+/**
+ * Reschedule an entity to a new date (and optionally time).
+ * Updates the appropriate date field based on entity type registry.
+ */
+async function _rescheduleEntity(entityType, entityId, newDateStr, newHour) {
+  try {
+    const allByType = await getEntitiesByType(entityType);
+    const entity = allByType.find(e => e.id === entityId);
+    if (!entity) return;
+
+    const reg = ENTITY_REGISTRY[entityType];
+    if (!reg) return;
+    const dateField = reg.dateField;
+    const oldValue = entity[dateField];
+
+    if (reg.hasTime && newHour != null) {
+      // Timed entity: set to specific hour on new date
+      const hourStr = String(newHour).padStart(2, '0');
+      entity[dateField] = new Date(`${newDateStr}T${hourStr}:00:00`).toISOString();
+      // If event has endDate, shift it by the same delta
+      if (entityType === 'event' && entity.endDate && oldValue) {
+        const oldStart = new Date(oldValue);
+        const newStart = new Date(entity[dateField]);
+        const delta = newStart - oldStart;
+        entity.endDate = new Date(new Date(entity.endDate).getTime() + delta).toISOString();
+      }
+    } else if (reg.hasTime) {
+      // Timed entity dropped on day cell (no specific hour): preserve time, change date
+      if (oldValue && !/^\d{4}-\d{2}-\d{2}$/.test(oldValue)) {
+        const old = new Date(oldValue);
+        const preserved = new Date(`${newDateStr}T${String(old.getHours()).padStart(2,'0')}:${String(old.getMinutes()).padStart(2,'0')}:00`);
+        const delta = preserved - old;
+        entity[dateField] = preserved.toISOString();
+        if (entityType === 'event' && entity.endDate) {
+          entity.endDate = new Date(new Date(entity.endDate).getTime() + delta).toISOString();
+        }
+      } else {
+        entity[dateField] = newDateStr + 'T12:00:00';
+      }
+    } else {
+      // Date-only entity (task, mealPlan): just set the date string
+      entity[dateField] = newDateStr;
+    }
+
+    await saveEntity(entity);
+    console.log(`[calendar] Rescheduled ${entityType} "${entity.title || entity.id}" → ${newDateStr}`);
+  } catch (err) {
+    console.error('[calendar] Reschedule failed:', err);
+  }
 }
 
 // ── Style injection ───────────────────────────────────────── //
@@ -1182,6 +1340,11 @@ function _injectStyles() {
     }
     .cal-today-btn {
       white-space: nowrap;
+    }
+    .cal-quick-btns {
+      display: flex;
+      gap: var(--space-2);
+      margin-left: auto;
     }
     .cal-toggle-row {
       display: flex;
@@ -1685,6 +1848,23 @@ function _injectStyles() {
       border: 0;
     }
 
+    /* ── Drag-and-drop ─────────────────────────────────── */
+    .cal-dragging {
+      opacity: 0.5;
+      cursor: grabbing;
+    }
+    .cal-drop-target {
+      background: rgba(10, 123, 108, 0.12) !important;
+      outline: 2px dashed var(--color-accent);
+      outline-offset: -2px;
+    }
+    [draggable="true"] {
+      cursor: grab;
+    }
+    [draggable="true"]:active {
+      cursor: grabbing;
+    }
+
     /* ── Responsive ───────────────────────────────────── */
     @media (max-width: 600px) {
       .cal-toggle-row { width: 100%; }
@@ -1693,6 +1873,9 @@ function _injectStyles() {
       .cal-hour-label { font-size: 9px; }
       .cal-agenda-time { width: 80px; min-width: 80px; }
       .cal-popover { width: calc(100vw - 32px); max-width: 340px; }
+      .cal-quick-btns { width: 100%; justify-content: stretch; }
+      .cal-quick-btns .btn { flex: 1; }
+      .cal-title-row { gap: var(--space-2); }
     }
   `;
   document.head.appendChild(style);

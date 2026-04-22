@@ -49,8 +49,8 @@ export function initEntityPanel() {
   });
 
   // Listen for open requests from anywhere
-  on(EVENTS.PANEL_OPENED, ({ entityId } = {}) => {
-    if (entityId) openPanel(entityId);
+  on(EVENTS.PANEL_OPENED, ({ entityId, entityType } = {}) => {
+    if (entityId) openPanel(entityId, entityType);
   });
 
   // Refresh if entity we're showing got saved elsewhere
@@ -67,6 +67,61 @@ export function initEntityPanel() {
   });
 
   console.log('[entity-panel] Initialised.');
+
+  // ── One-time repair for entities corrupted by type-field collision ──
+  // Events/appointments with type set to a subtype value (e.g. 'Work', 'School')
+  // instead of 'event'/'appointment' need repair.
+  _repairCorruptedTypes();
+}
+
+/**
+ * Scan for entities whose .type doesn't match any registered entity type
+ * but whose field values suggest they belong to a known type.
+ * Repairs them by moving the corrupted type to ._subtype and restoring the correct type.
+ */
+async function _repairCorruptedTypes() {
+  try {
+    const { getEntitiesByType: _gbt } = await import('../core/db.js');
+    const allTypes = getAllEntityTypes({ includeArchived: true });
+    const knownKeys = new Set(allTypes.map(t => t.key));
+
+    // Build a map of subtype values → parent type key
+    // e.g. 'Work' → 'event', 'School' → 'event', 'Medical' → 'appointment'
+    const subtypeMap = new Map();
+    for (const tc of allTypes) {
+      for (const field of tc.fields || []) {
+        if (field.key === 'type' && field.options) {
+          for (const opt of field.options) {
+            subtypeMap.set(opt, tc.key);
+          }
+        }
+      }
+    }
+
+    // Scan all entities — find ones with unrecognised type
+    const db = await import('../core/db.js');
+    const allEntities = await db.queryEntities({ includeDeleted: false });
+    let repairCount = 0;
+
+    for (const entity of allEntities) {
+      if (knownKeys.has(entity.type)) continue;
+
+      // Try to identify the correct type from the subtype map
+      const correctType = subtypeMap.get(entity.type);
+      if (correctType) {
+        entity._subtype = entity.type;
+        entity.type = correctType;
+        await db.saveEntity(entity);
+        repairCount++;
+      }
+    }
+
+    if (repairCount > 0) {
+      console.info(`[entity-panel] Repaired ${repairCount} entities with corrupted type field.`);
+    }
+  } catch (err) {
+    console.warn('[entity-panel] Type repair scan failed:', err);
+  }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -76,8 +131,9 @@ export function initEntityPanel() {
 /**
  * Open the entity panel for a given entity ID.
  * @param {string} entityId
+ * @param {string} [entityTypeHint] - fallback type key if entity.type is corrupted
  */
-export async function openPanel(entityId) {
+export async function openPanel(entityId, entityTypeHint) {
   if (!_panel || !_panelBody) return;
 
   try {
@@ -87,7 +143,23 @@ export async function openPanel(entityId) {
       return;
     }
 
-    const config = getEntityTypeConfig(entity.type);
+    let config = getEntityTypeConfig(entity.type);
+
+    // If config not found, the entity.type may have been corrupted by a
+    // field named 'type' (e.g. event subtype 'Work' overwrote 'event').
+    // Try the entityTypeHint or scan for a matching type by field shape.
+    if (!config && entityTypeHint) {
+      config = getEntityTypeConfig(entityTypeHint);
+      if (config) {
+        // Repair: move corrupted type to _subtype, restore structural type
+        entity._subtype = entity.type;
+        entity.type = entityTypeHint;
+        // Persist the repair so it doesn't recur
+        try { await saveEntity(entity); } catch { /* best effort */ }
+        console.info(`[entity-panel] Repaired entity "${entityId}": type "${entity._subtype}" → "${entityTypeHint}"`);
+      }
+    }
+
     if (!config) {
       console.warn(`[entity-panel] No config for type "${entity.type}".`);
       return;

@@ -338,7 +338,9 @@ function _buildFieldGroup(field, config) {
 }
 
 function _buildFieldControl(field, config) {
-  const existing = _draft[field.key];
+  // GUARD: For fields named 'type', read from '_subtype' to avoid collision
+  // with the structural entity.type property (which holds the entity kind key).
+  const existing = field.key === 'type' ? (_draft._subtype ?? _draft[field.key]) : _draft[field.key];
 
   switch (field.type) {
 
@@ -443,7 +445,11 @@ function _buildFieldControl(field, config) {
       }
 
       select.addEventListener('change', () => {
-        _draft[field.key] = select.value || null;
+        const val = select.value || null;
+        if (field.key === 'type') {
+          _draft._subtype = val;   // safe alias
+        }
+        _draft[field.key] = val;
       });
       return select;
     }
@@ -827,9 +833,23 @@ async function _submitForm() {
         // Relations handled via edges — don't store on entity
       } else {
         const val = _draft[field.key];
-        if (val !== undefined) entityData[field.key] = val;
+        if (val !== undefined) {
+          // GUARD: Never let a field named 'type' overwrite the structural entity type.
+          // Store it under a safe alias instead (e.g. 'eventType', 'category').
+          if (field.key === 'type') {
+            entityData._subtype = val;       // preserved for display
+            // Also keep the field.key so reads work — but re-assert structural type after
+          } else {
+            entityData[field.key] = val;
+          }
+        }
       }
     }
+
+    // Re-assert structural type AFTER field loop to guard against any
+    // field.key collision (e.g. event has a 'type' select field for
+    // Family/School/Work which would overwrite entity.type).
+    entityData.type = _typeKey;
 
     // ── Save entity ───────────────────────────────────────── //
     const saved = await saveEntity(entityData);
