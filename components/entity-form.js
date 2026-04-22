@@ -55,15 +55,34 @@ export function initEntityForm() {
 
   // Global Cmd+Enter to save if form is open
   document.addEventListener('keydown', (e) => {
-    if (_overlay && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    if (!_overlay) return;
+
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       _submitForm();
+      return;
     }
-    if (_overlay && e.key === 'Escape') {
-      e.stopPropagation();
-      closeForm();
+
+    if (e.key === 'Escape') {
+      // If focus is inside a form input/select/textarea, let the input
+      // handle its own Esc first (clear value, blur) — only close the
+      // form if focus is on the overlay itself or a non-editable element
+      const active = document.activeElement;
+      const isInsideInput = active &&
+        _overlay.contains(active) &&
+        (active.tagName === 'INPUT' ||
+         active.tagName === 'TEXTAREA' ||
+         active.tagName === 'SELECT' ||
+         active.isContentEditable);
+
+      if (!isInsideInput) {
+        e.preventDefault();
+        closeForm();
+      }
+      // If inside an input: let the input's own Esc handler fire,
+      // then a second Esc (after blur) will hit this branch and close.
     }
-  }, true);
+  });
 
   console.log('[entity-form] Initialised.');
 }
