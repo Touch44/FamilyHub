@@ -662,9 +662,10 @@
   import { navigate, showView, wireNavItems, handleInitialHash, VIEW_KEYS }
                                      from './core/router.js';
   import { initDB }                  from './core/db.js';
+  import { initGraphEngine }         from './core/graph-engine.js';
+  import { initEntityPanel }         from './components/entity-panel.js';
   import { initAuth, isLoggedIn, isFirstRun, doFirstRun, doLogin, doLogout }
                                      from './core/auth.js';
-  import { initGraphEngine }         from './core/graph-engine.js';
 
   // ── App initialisation ────────────────────────────────────
   async function initApp() {
@@ -691,16 +692,8 @@
         });
       }
 
-      // 3. Wire entity panel close
-      const panelClose = document.getElementById('entity-panel-close');
-      const panel      = document.getElementById('entity-panel');
-      if (panelClose && panel) {
-        panelClose.addEventListener('click', () => {
-          panel.classList.remove('open');
-          panel.setAttribute('aria-hidden', 'true');
-          emit(EVENTS.PANEL_CLOSED);
-        });
-      }
+      // 3. Entity panel close button — handled by components/entity-panel.js
+      const panel = document.getElementById('entity-panel');
 
       // 4. Wire search overlay (Cmd+K)
       const searchBtn     = document.getElementById('topbar-search-btn');
@@ -795,11 +788,7 @@
         // Esc — close overlays
         if (e.key === 'Escape') {
           closeSearch();
-          if (panel) {
-            panel.classList.remove('open');
-            panel.setAttribute('aria-hidden', 'true');
-            emit(EVENTS.PANEL_CLOSED);
-          }
+          // Entity panel Esc is handled by components/entity-panel.js
           const shortcutsOverlay = document.getElementById('shortcuts-overlay');
           if (shortcutsOverlay) {
             shortcutsOverlay.classList.remove('open');
@@ -870,6 +859,7 @@
       //     are all available here if any top-level wiring needs them.
       await initDB();
       await initGraphEngine();
+      initEntityPanel();
       await initAuth();
 
       // 11. Service Worker registration (Blueprint §8.2)
@@ -910,13 +900,8 @@
         });
       }
 
-      // 13. Open entity panel on PANEL_OPENED event (wired by entity-panel.js in Phase 1)
-      on(EVENTS.PANEL_OPENED, ({ entityType, entityId } = {}) => {
-        if (panel) {
-          panel.classList.add('open');
-          panel.setAttribute('aria-hidden', 'false');
-        }
-      });
+      // 13. Entity panel open/close — handled by components/entity-panel.js
+      // (initEntityPanel() wires PANEL_OPENED listener internally)
 
       // 14. Theme toggle listener
       on(EVENTS.THEME_CHANGED, ({ theme }) => {
