@@ -54,7 +54,12 @@ export function initSearch() {
   // ── Input: trigger search or command mode ─────────────────
   _input.addEventListener('input', () => {
     clearTimeout(_searchTimeout);
-    _searchTimeout = setTimeout(_render, 120);
+    // Command mode (starts with >) renders immediately — no debounce needed
+    if (_input.value.trimStart().startsWith('>')) {
+      _render();
+    } else {
+      _searchTimeout = setTimeout(_render, 120);
+    }
   });
 
   // ── Keyboard navigation ───────────────────────────────────
@@ -87,6 +92,7 @@ export function openSearch() {
   if (!_overlay) return;
   _overlay.classList.add('open');
   _overlay.setAttribute('aria-hidden', 'false');
+  _overlay.removeAttribute('inert');
   _input.value = '';
   _selectedIndex = -1;
   _render();
@@ -98,6 +104,7 @@ export function closeSearch() {
   if (!_overlay) return;
   _overlay.classList.remove('open');
   _overlay.setAttribute('aria-hidden', 'true');
+  _overlay.setAttribute('inert', '');
   _selectedIndex = -1;
   _currentItems  = [];
 }
@@ -109,8 +116,8 @@ export function closeSearch() {
 async function _render() {
   const query = _input.value.trim();
 
-  if (query.startsWith('>')) {
-    _renderCommands(query.slice(1).trim());
+  if (_input.value.trimStart().startsWith('>')) {
+    _renderCommands(query.replace(/^>/, '').trim());
   } else if (query.length === 0) {
     await _renderRecents();
   } else {
@@ -352,6 +359,7 @@ const COMMANDS = [
       if (so) {
         so.classList.add('open');
         so.setAttribute('aria-hidden', 'false');
+        so.removeAttribute('inert');
       }
     },
   },

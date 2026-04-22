@@ -76,7 +76,7 @@ export function initFab() {
     }
   });
 
-  // ── Keyboard shortcuts: N = note, T = task ───────────────
+  // ── Keyboard shortcuts: N = note, T = task, + = toggle FAB ─
   document.addEventListener('keydown', (e) => {
     const inTextField = e.target.matches(
       'input, textarea, [contenteditable="true"], select'
@@ -93,6 +93,14 @@ export function initFab() {
         e.preventDefault();
         collapseFab();
         _openQuickForm('task');
+        break;
+      case '+': case '=':
+        e.preventDefault();
+        if (_fab.classList.contains('fab-expanded')) {
+          collapseFab();
+        } else {
+          expandFab();
+        }
         break;
     }
   });

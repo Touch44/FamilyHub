@@ -530,7 +530,7 @@
 
 <!-- ── Global Search / Command Palette ── -->
 <div id="search-overlay" role="dialog" aria-label="Search" aria-modal="true"
-     aria-hidden="true">
+     aria-hidden="true" inert>
   <div id="search-palette">
     <div style="display: flex; align-items: center; gap: var(--space-2);
                 padding: var(--space-3) var(--space-4);
@@ -558,7 +558,7 @@
 
 <!-- ── Keyboard Shortcuts Help Overlay ── -->
 <div id="shortcuts-overlay" role="dialog" aria-label="Keyboard shortcuts"
-     aria-modal="true" aria-hidden="true">
+     aria-modal="true" aria-hidden="true" inert>
   <div style="background: var(--color-bg); border-radius: var(--radius-lg);
               box-shadow: var(--shadow-2xl); padding: var(--space-6);
               width: 100%; max-width: 520px; max-height: 80dvh;
@@ -574,6 +574,7 @@
     <div style="display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4);
                 align-items: center;">
       <kbd>⌘K</kbd>        <span class="text-sm">Open global search / command palette</span>
+      <kbd>+</kbd>          <span class="text-sm">Toggle quick-create menu (FAB)</span>
       <kbd>N</kbd>          <span class="text-sm">Quick new Note (outside text field)</span>
       <kbd>T</kbd>          <span class="text-sm">Quick new Task</span>
       <kbd>E</kbd>          <span class="text-sm">Quick new Event</span>
@@ -733,6 +734,7 @@
           if (shortcutsOverlay?.classList.contains('open')) {
             shortcutsOverlay.classList.remove('open');
             shortcutsOverlay.setAttribute('aria-hidden', 'true');
+            shortcutsOverlay.setAttribute('inert', '');
           }
           return;
         }
@@ -752,6 +754,7 @@
             if (so) {
               so.classList.add('open');
               so.setAttribute('aria-hidden', 'false');
+              so.removeAttribute('inert');
             }
             break;
           }
@@ -773,6 +776,7 @@
           if (so) {
             so.classList.remove('open');
             so.setAttribute('aria-hidden', 'true');
+            so.setAttribute('inert', '');
           }
         });
       }

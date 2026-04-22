@@ -39,6 +39,17 @@ const SHELL_FILES = [
   './components/entity-form.js',
   './components/fab.js',
   './components/search.js',
+  // Icons (all sizes + maskable variants for PWA installability)
+  './icons/icon-192.png',
+  './icons/icon-192-maskable.png',
+  './icons/icon-512.png',
+  './icons/icon-512-maskable.png',
+  // Shortcut icons (used by OS home screen shortcuts)
+  './icons/shortcut-daily.png',
+  './icons/shortcut-task.png',
+  // Screenshots (used by PWA install UI in supporting browsers)
+  './screenshots/daily-desktop.png',
+  './screenshots/kanban-mobile.png',
 ];
 
 // ── Patterns: Never Cache ─────────────────────────────────── //
