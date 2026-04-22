@@ -854,6 +854,9 @@ function _buildWeekView(container, dateMap) {
   allDayGutter.textContent = 'all day';
   allDayRow.appendChild(allDayGutter);
 
+  // Track multi-day events already rendered (by entity id) so they appear once
+  const _renderedMultiDay = new Set();
+
   for (let d = 0; d < 7; d++) {
     const dayDate = new Date(weekStart);
     dayDate.setDate(dayDate.getDate() + d);
@@ -884,7 +887,7 @@ function _buildWeekView(container, dateMap) {
       allDayCell.appendChild(more);
     }
 
-    // DateEntities shown as chips too
+    // DateEntities shown as chips
     const datesForDay = items.filter(it => it.entityType === 'dateEntity');
     for (const de of datesForDay.slice(0, 2)) {
       const chip = document.createElement('button');
@@ -898,23 +901,27 @@ function _buildWeekView(container, dateMap) {
       allDayCell.appendChild(chip);
     }
 
-    // Multi-day events shown as all-day chips (not timed blocks)
-    const multiDayEvents = items.filter(it => {
-      if (it.entityType !== 'event' || !it.entity.endDate) return false;
-      const startDs = _isoToLocalDate(it.entity.date);
-      const endDs = _isoToLocalDate(it.entity.endDate);
-      return startDs && endDs && startDs !== endDs;
+    // Single-day events that have no time (date-only start, no endDate)
+    // are shown as all-day chips
+    const allDayEvents = items.filter(it => {
+      if (it.entityType !== 'event') return false;
+      if (it.entity.endDate) {
+        const sd = _isoToLocalDate(it.entity.date);
+        const ed = _isoToLocalDate(it.entity.endDate);
+        if (sd && ed && sd !== ed) return false; // multi-day handled below
+      }
+      return _isoToLocalHourFrac(it.entity.date) === null; // date-only
     });
-    for (const mde of multiDayEvents.slice(0, 2)) {
+    for (const ade of allDayEvents.slice(0, 2)) {
       const chip = document.createElement('button');
       chip.className = 'cal-week-chip';
       chip.style.cssText = 'background: var(--color-info-bg); color: var(--color-info-text); border-left: 2px solid var(--color-info);';
-      chip.textContent = mde.entity.title || 'Event';
-      chip.title = mde.entity.title || 'Event';
-      _makeDraggable(chip, 'event', mde.entity.id);
+      chip.textContent = ade.entity.title || 'Event';
+      chip.title = ade.entity.title || 'Event';
+      _makeDraggable(chip, 'event', ade.entity.id);
       chip.addEventListener('click', (e) => {
         e.stopPropagation();
-        emit(EVENTS.PANEL_OPENED, { entityType: 'event', entityId: mde.entity.id });
+        emit(EVENTS.PANEL_OPENED, { entityType: 'event', entityId: ade.entity.id });
       });
       allDayCell.appendChild(chip);
     }
@@ -924,7 +931,79 @@ function _buildWeekView(container, dateMap) {
 
     allDayRow.appendChild(allDayCell);
   }
+
   weekGrid.appendChild(allDayRow);
+
+  // ── Multi-day spanning bars (positioned after DOM render) ──
+  // Collect unique multi-day events visible this week
+  const weekEndDate = new Date(weekStart);
+  weekEndDate.setDate(weekEndDate.getDate() + 6);
+  const weekStartStr = _toDateStr(weekStart);
+  const weekEndStr = _toDateStr(weekEndDate);
+  const multiDaySet = new Map(); // entityId → { entity, startDay, endDay }
+
+  for (let d = 0; d < 7; d++) {
+    const dayDate = new Date(weekStart);
+    dayDate.setDate(dayDate.getDate() + d);
+    const ds = _toDateStr(dayDate);
+    const items = dateMap.get(ds) || [];
+
+    for (const it of items) {
+      if (it.entityType !== 'event' || !it.entity.endDate) continue;
+      if (multiDaySet.has(it.entity.id)) continue;
+
+      const startDs = _isoToLocalDate(it.entity.date);
+      const endDs = _isoToLocalDate(it.entity.endDate);
+      if (!startDs || !endDs || startDs === endDs) continue;
+
+      // Clamp to visible week
+      const visStart = startDs < weekStartStr ? 0 : d;
+      const rawEnd = new Date(endDs + 'T00:00:00');
+      const weekEndD = new Date(weekStart);
+      weekEndD.setDate(weekEndD.getDate() + 6);
+      const clampedEnd = rawEnd > weekEndD ? 6 : Math.floor((rawEnd - weekStart) / 86400000);
+      const visEnd = Math.min(6, Math.max(visStart, clampedEnd));
+
+      multiDaySet.set(it.entity.id, {
+        entity: it.entity,
+        startCol: visStart,
+        endCol: visEnd,
+      });
+    }
+  }
+
+  // Place spanning bars after render
+  if (multiDaySet.size > 0) {
+    requestAnimationFrame(() => {
+      const cells = allDayRow.querySelectorAll('.cal-week-allday-cell');
+      if (cells.length < 7) return;
+      const gutterW = allDayGutter.offsetWidth;
+      const rowRect = allDayRow.getBoundingClientRect();
+      const cellWidth = (rowRect.width - gutterW) / 7;
+      let barIndex = 0;
+
+      for (const [eid, info] of multiDaySet) {
+        const bar = document.createElement('button');
+        bar.className = 'cal-week-multiday-bar';
+        bar.style.left = `${gutterW + info.startCol * cellWidth + 2}px`;
+        bar.style.width = `${(info.endCol - info.startCol + 1) * cellWidth - 4}px`;
+        bar.style.top = `${barIndex * 22 + 2}px`;
+        bar.textContent = info.entity.title || 'Event';
+        bar.title = info.entity.title || 'Event';
+        _makeDraggable(bar, 'event', eid);
+        bar.addEventListener('click', (e) => {
+          e.stopPropagation();
+          emit(EVENTS.PANEL_OPENED, { entityType: 'event', entityId: eid });
+        });
+        allDayRow.appendChild(bar);
+        barIndex++;
+      }
+      // Expand allDay row height to fit bars
+      if (barIndex > 0) {
+        allDayRow.style.minHeight = `${Math.max(32, barIndex * 22 + 8)}px`;
+      }
+    });
+  }
 
   // ── Time grid body ──
   const body = document.createElement('div');
@@ -1657,6 +1736,7 @@ function _injectStyles() {
       display: flex;
       border-bottom: 1px solid var(--color-border);
       min-height: 32px;
+      position: relative;
     }
     .cal-week-allday-cell {
       flex: 1;
@@ -1667,6 +1747,26 @@ function _injectStyles() {
       border-left: 1px solid var(--color-border);
       min-height: 28px;
     }
+    .cal-week-multiday-bar {
+      position: absolute;
+      height: 20px;
+      background: var(--color-info-bg);
+      border: none;
+      border-left: 3px solid var(--color-info);
+      border-radius: var(--radius-sm);
+      font-size: 10px;
+      font-family: var(--font-body);
+      font-weight: var(--weight-semibold);
+      color: var(--color-info-text);
+      padding: 2px 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: grab;
+      z-index: var(--z-raised);
+      transition: opacity var(--transition-fast);
+    }
+    .cal-week-multiday-bar:hover { opacity: 0.8; }
     .cal-week-chip {
       font-size: 10px;
       font-family: var(--font-body);
