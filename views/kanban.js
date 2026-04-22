@@ -717,7 +717,7 @@ function _injectStyles() {
   style.id = 'kanban-view-styles';
   style.textContent = `
     /* ── Kanban Layout ─────────────────────────────── */
-    #view-kanban {
+    #view-kanban.active {
       display: flex;
       flex-direction: column;
       height: 100%;

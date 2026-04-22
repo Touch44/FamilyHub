@@ -21,7 +21,7 @@
  * Registration: registerView('daily', renderDaily) called at module init.
  */
 
-import { registerView }                    from '../core/router.js';
+import { registerView, navigate, VIEW_KEYS } from '../core/router.js';
 import { getEntitiesByType, getSetting,
          saveEntity, uid }                 from '../core/db.js';
 import { emit, EVENTS }                    from '../core/events.js';
@@ -882,7 +882,9 @@ function _renderWallPosts(container, dateStr, posts, personMap, accountMap) {
         ? `<img class="daily-wall-thumb" src="${_esc(post.photoUrl)}" alt="" loading="lazy" />`
         : ''}
     `;
-    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'post', entityId: post.id }));
+    row.addEventListener('click', () => {
+      navigate(VIEW_KEYS.FAMILY_WALL, { highlightId: post.id }, 'Wall Post');
+    });
     list.appendChild(row);
   }
 
@@ -925,7 +927,11 @@ function _renderComments(container, dateStr, notes, personMap, accountMap) {
       </div>
     `;
     // Click opens the comment entity in the panel
-    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'note', entityId: comment.id }));
+    row.addEventListener('click', () => {
+      // Navigate to Family Wall; highlight parent post if stored on comment
+      const parentPostId = comment._parentPostId || null;
+      navigate(VIEW_KEYS.FAMILY_WALL, parentPostId ? { highlightId: parentPostId } : {}, 'Comment');
+    });
     list.appendChild(row);
   }
 
@@ -984,7 +990,7 @@ function _injectStyles() {
   style.id = 'daily-view-styles';
   style.textContent = `
     /* ── Daily View Layout ────────────────────────────── */
-    #view-daily {
+    #view-daily.active {
       display: flex;
       flex-direction: column;
       gap: var(--space-4);
@@ -994,7 +1000,7 @@ function _injectStyles() {
       width: 100%;
     }
     @media (max-width: 600px) {
-      #view-daily { padding: var(--space-3) var(--space-3); }
+      #view-daily.active { padding: var(--space-3) var(--space-3); }
     }
 
     /* ── Top Bar ─────────────────────────────────────── */

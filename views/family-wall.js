@@ -15,7 +15,7 @@
  *   Compose: separate Photo button (images only) + File button (any type, no restrict = fast)
  */
 
-import { registerView }               from '../core/router.js';
+import { registerView, navigate, VIEW_KEYS } from '../core/router.js';
 import { getEntitiesByType, getEntity,
          saveEntity, deleteEntity,
          getEdgesFrom, getEdgesTo,
@@ -292,32 +292,38 @@ function _mkFileLabel(labelText, accept, onFile) {
  * @param {Function} onDone   - callback(dataUrl) when read is complete
  */
 function _readFileWithProgress(file, sp, onDone) {
-  // Show an immediate progress bar in the label
-  sp.innerHTML = `<span class="fw-prog-wrap"><span class="fw-prog-bar" style="width:0%"></span></span> <span class="fw-prog-txt">0%</span>`;
+  // Phase 1: instant blob-URL preview (0ms, no encoding needed)
+  const blobUrl = URL.createObjectURL(file);
+
+  // Show label immediately
+  sp.innerHTML = `<span class="fw-prog-wrap"><span class="fw-prog-bar" style="width:5%"></span></span> <span class="fw-prog-txt">Reading…</span>`;
   const bar = sp.querySelector('.fw-prog-bar');
   const txt = sp.querySelector('.fw-prog-txt');
 
-  const reader = new FileReader();
+  // Fire callback immediately with blobUrl so caller can show preview NOW
+  // (blobUrl works for <img src> but NOT for storing in IndexedDB)
+  // Caller receives { blobUrl, dataUrl:null } initially, then dataUrl when ready
+  onDone({ blobUrl, dataUrl: null, file });
 
+  // Phase 2: base64 encode in background for storage
+  const reader = new FileReader();
   reader.onprogress = (e) => {
-    if (e.lengthComputable) {
+    if (e.lengthComputable && bar && txt) {
       const pct = Math.round((e.loaded / e.total) * 100);
-      if (bar) bar.style.width = pct + '%';
-      if (txt) txt.textContent = pct + '%';
+      bar.style.width = pct + '%';
+      txt.textContent = pct + '%';
     }
   };
-
   reader.onload = (e) => {
+    URL.revokeObjectURL(blobUrl);
     if (bar) bar.style.width = '100%';
     if (txt) txt.textContent = '✅ ' + file.name;
-    onDone(e.target.result);
+    // Fire again with real dataUrl for storage
+    onDone({ blobUrl: null, dataUrl: e.target.result, file });
   };
-
   reader.onerror = () => {
     sp.textContent = '❌ Failed to read file';
   };
-
-  // Start reading — browser handles async chunked reads internally
   reader.readAsDataURL(file);
 }
 
@@ -458,11 +464,18 @@ function _buildCompose(el, pm, apm) {
 
   // Photo device picker — immediate preview + progress bar
   const photoLbl = _mkFileLabel('📷 Choose photo', 'image/*', (f, sp) => {
-    _readFileWithProgress(f, sp, (dataUrl) => {
-      photoVal = dataUrl;
-      preview.src = dataUrl;
-      preview.style.display = '';
-      urlInp.value = '';
+    _readFileWithProgress(f, sp, ({ blobUrl, dataUrl }) => {
+      if (blobUrl) {
+        // Phase 1: instant preview via blob URL
+        preview.src = blobUrl;
+        preview.style.display = '';
+        urlInp.value = '';
+      }
+      if (dataUrl) {
+        // Phase 2: swap to real base64 for storage
+        photoVal = dataUrl;
+        if (preview.src.startsWith('blob:')) preview.src = dataUrl;
+      }
     });
   });
 
@@ -478,9 +491,20 @@ function _buildCompose(el, pm, apm) {
 
   const anyFileLbl = _mkFileLabel('📎 Add any file', '', (f, sp) => {
     if (f.size > 8*1024*1024 && !confirm(`${f.name} is ${_bytes(f.size)}. Store in database?`)) return;
-    _readFileWithProgress(f, sp, (dataUrl) => {
-      files.push({ name: f.name, size: f.size, mimeType: f.type, dataUrl });
-      renderFileList();
+    let _fileIdx = null;  // track pending entry index
+    _readFileWithProgress(f, sp, ({ blobUrl, dataUrl }) => {
+      if (blobUrl) {
+        // Phase 1: add placeholder entry with blobUrl for immediate thumbnail
+        _fileIdx = files.length;
+        files.push({ name: f.name, size: f.size, mimeType: f.type, dataUrl: blobUrl, _pending: true });
+        renderFileList();
+      }
+      if (dataUrl && _fileIdx !== null) {
+        // Phase 2: replace blobUrl with real base64 in the existing entry
+        files[_fileIdx].dataUrl = dataUrl;
+        files[_fileIdx]._pending = false;
+        renderFileList();
+      }
     });
   });
 
@@ -539,6 +563,8 @@ function _buildCompose(el, pm, apm) {
   postBtn.addEventListener('click', async () => {
     const body=ta.value.trim();
     if (!body && selType==='Text' && !files.length) return;
+    if (files.some(f => f._pending)) { alert('Please wait — files are still uploading.'); return; }
+    if (selType==='Photo' && !photoVal && !urlInp.value.trim()) { alert('Please wait — photo is still loading.'); return; }
     postBtn.disabled=true; postBtn.textContent='Posting…';
     try {
       const tags=tagInp.value.split(',').map(x=>x.trim()).filter(Boolean);
@@ -561,13 +587,34 @@ function _buildCompose(el, pm, apm) {
       photoVal=null; files.length=0; fileList.innerHTML='';
       preview.src=''; preview.style.display='none';
       selType='Text'; typeGrp.querySelectorAll('.fw-compose-type-btn').forEach(b=>b.classList.remove('active'));
+      cancelBtn.style.display='none';
       renderWall({_internal:true});
     } catch(e) { console.error('[fw] post failed',e); }
     finally { postBtn.disabled=false; postBtn.textContent='Post'; }
   });
 
+  const cancelBtn=document.createElement('button');
+  cancelBtn.className='btn btn-ghost btn-sm fw-cancel-btn';
+  cancelBtn.textContent='Cancel';
+  cancelBtn.style.display='none';
+  cancelBtn.addEventListener('click', () => {
+    ta.value=''; urlInp.value=''; tagInp.value='';
+    photoSec.style.display='none'; fileSec.style.display='none';
+    photoVal=null; files.length=0; fileList.innerHTML='';
+    preview.src=''; preview.style.display='none';
+    selType='Text';
+    typeGrp.querySelectorAll('.fw-compose-type-btn').forEach(b=>b.classList.remove('active'));
+    cancelBtn.style.display='none';
+  });
+
+  // Show cancel whenever the user starts composing
+  ta.addEventListener('input', () => { if (ta.value.trim()) cancelBtn.style.display=''; });
+  typeGrp.querySelectorAll('.fw-compose-type-btn').forEach(b => {
+    b.addEventListener('click', () => { cancelBtn.style.display=''; });
+  });
+
   const actRow=document.createElement('div'); actRow.className='fw-compose-actions';
-  actRow.append(typeGrp, postBtn);
+  actRow.append(typeGrp, cancelBtn, postBtn);
   box.appendChild(actRow);
   el.appendChild(box);
 }
@@ -759,6 +806,7 @@ async function _buildCard(post, pm, apm) {
         _authorPersonId:a?.memberId||null,
         _authorName:ap?.name||a?.username||'Unknown',
         _authorColor:_getColor(ap),
+        _parentPostId:post.id,
       },a?.id);
       await saveEdge({fromId:saved.id,toId:post.id,relation:'comments-on'},a?.id);
       cf.value=''; renderWall({_internal:true});
@@ -865,8 +913,8 @@ function _injectStyles() {
   if (document.getElementById('family-wall-styles')) return;
   const s=document.createElement('style'); s.id='family-wall-styles';
   s.textContent=`
-    #view-family-wall { display:flex; flex-direction:column; gap:var(--space-4); padding:var(--space-5) var(--space-6); max-width:720px; margin:0 auto; width:100%; }
-    @media(max-width:600px){#view-family-wall{padding:var(--space-3);}}
+    #view-family-wall.active { display:flex; flex-direction:column; gap:var(--space-4); padding:var(--space-5) var(--space-6); max-width:720px; margin:0 auto; width:100%; }
+    @media(max-width:600px){#view-family-wall.active{padding:var(--space-3);}}
 
     .fw-filter-bar { display:flex; flex-direction:column; gap:var(--space-2); padding:var(--space-3); background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-md); }
     .fw-mode-row { display:flex; gap:var(--space-1); }
@@ -975,6 +1023,17 @@ function _injectStyles() {
     .fw-lb-prev { left:var(--space-3); }
     .fw-lb-next { right:var(--space-3); }
 
+    /* Post highlight (from Daily Review navigation) */
+    @keyframes fw-highlight-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(10,123,108,0.5), var(--shadow-sm); }
+      50%  { box-shadow: 0 0 0 6px rgba(10,123,108,0.2), var(--shadow-md); }
+      100% { box-shadow: 0 0 0 0 rgba(10,123,108,0), var(--shadow-sm); }
+    }
+    .fw-post-highlight {
+      animation: fw-highlight-pulse 0.7s ease-out 2;
+      border-color: var(--color-accent) !important;
+    }
+
     /* Upload progress */
     .fw-prog-wrap { display:inline-block; width:80px; height:6px; background:var(--color-border); border-radius:3px; vertical-align:middle; overflow:hidden; }
     .fw-prog-bar  { display:block; height:100%; background:var(--color-accent); border-radius:3px; transition:width 0.1s linear; }
@@ -1020,6 +1079,8 @@ async function renderWall(params={}) {
 
   el.innerHTML='<div style="padding:var(--space-8);color:var(--color-text-muted);text-align:center;">Loading Family Wall…</div>';
 
+  const highlightId = params?.highlightId || null;
+
   try {
     const { posts, persons, pm, apm } = await _loadData();
     el.innerHTML='';
@@ -1039,6 +1100,18 @@ async function renderWall(params={}) {
       } else {
         for (const post of filtered) el.appendChild(await _buildCard(post,pm,apm));
       }
+    }
+
+    // Scroll to + highlight a specific post if navigated from Daily Review
+    if (highlightId) {
+      requestAnimationFrame(() => {
+        const target = el.querySelector(`[data-post-id="${highlightId}"]`);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          target.classList.add('fw-post-highlight');
+          setTimeout(() => target.classList.remove('fw-post-highlight'), 2200);
+        }
+      });
     }
   } catch(e) {
     console.error('[fw] render failed',e);

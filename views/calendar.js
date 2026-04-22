@@ -1406,7 +1406,7 @@ function _injectStyles() {
   style.id = 'calendar-view-styles';
   style.textContent = `
     /* ── Calendar View Layout ─────────────────────────── */
-    #view-calendar {
+    #view-calendar.active {
       display: flex;
       flex-direction: column;
       gap: var(--space-4);
@@ -1416,7 +1416,7 @@ function _injectStyles() {
       width: 100%;
     }
     @media (max-width: 600px) {
-      #view-calendar { padding: var(--space-3); }
+      #view-calendar.active { padding: var(--space-3); }
     }
 
     /* ── Header ───────────────────────────────────────── */
