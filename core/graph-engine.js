@@ -136,6 +136,7 @@ const BUILT_IN_ENTITY_TYPES = [
       field('status',     'select',   { label: 'Status',   options: ['Inbox', 'In Progress', 'Review', 'Done'] }),
       field('priority',   'select',   { label: 'Priority', options: ['Low', 'Medium', 'High', 'Critical'] }),
       field('dueDate',    'date',     { label: 'Due Date' }),
+      field('dueTime',    'time',     { label: 'Due Time', placeholder: '06:00', helpText: 'Time of day (defaults to 6:00 AM if not set)' }),
       field('assignedTo', 'relation', { label: 'Assigned To', relatesTo: 'person' }),
       field('project',    'relation', { label: 'Project',     relatesTo: 'project' }),
       field('tags',       'tags',     { label: 'Tags' }),

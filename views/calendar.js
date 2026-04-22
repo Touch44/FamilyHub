@@ -24,7 +24,7 @@
  */
 
 import { registerView }              from '../core/router.js';
-import { getEntitiesByType, saveEntity } from '../core/db.js';
+import { getEntitiesByType, getEntity, saveEntity } from '../core/db.js';
 import { emit, on, EVENTS }         from '../core/events.js';
 
 // ── Constants ─────────────────────────────────────────────── //
@@ -1351,6 +1351,17 @@ function _makeDraggable(el, entityType, entityId) {
     e.dataTransfer.setData('text/plain', JSON.stringify({ entityType, entityId }));
     e.dataTransfer.effectAllowed = 'move';
     el.classList.add('cal-dragging');
+
+    // Custom ghost image: compact pill showing entity label
+    const ghost = document.createElement('div');
+    ghost.className = 'cal-drag-ghost';
+    ghost.textContent = el.textContent.trim().split('
+')[0].trim().slice(0, 40);
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 0, 0);
+    // Remove ghost after drag starts (browser has already captured it)
+    requestAnimationFrame(() => ghost.remove());
+
     // Store globally so drop targets can highlight
     _dragPayload = { entityType, entityId };
   });
@@ -1421,8 +1432,8 @@ function _makeDropTarget(el, newDateStr, baseHour) {
  */
 async function _rescheduleEntity(entityType, entityId, newDateStr, newHour, newMin = 0) {
   try {
-    const allByType = await getEntitiesByType(entityType);
-    const entity = allByType.find(e => e.id === entityId);
+    // O(1) direct lookup by ID — avoids loading all entities of this type
+    const entity = await getEntity(entityId);
     if (!entity) return;
 
     const reg = ENTITY_REGISTRY[entityType];
@@ -2064,6 +2075,22 @@ function _injectStyles() {
     }
 
     /* ── Drag-and-drop ─────────────────────────────────── */
+    /* Drag ghost image */
+    .cal-drag-ghost {
+      position: fixed;
+      top: -200px; left: -200px;       /* off-screen but in DOM for setDragImage */
+      background: var(--color-accent);
+      color: white;
+      font-size: 12px;
+      font-weight: var(--weight-semibold);
+      font-family: var(--font-body);
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: var(--shadow-md);
+    }
+
     /* Drag time tooltip */
     .cal-drag-tooltip {
       position: fixed;

@@ -365,7 +365,7 @@ export async function saveEntity(entity, byAccountId) {
       action:      isNew ? 'create' : 'update',
       entityType:  saved.type,
       entityId:    saved.id,
-      entityTitle: saved.title || saved.name || saved.id,
+      entityTitle: saved.title || saved.name || (saved.body ? saved.body.slice(0,60) : null) || saved.id,
       byAccountId,
       at:          now,
     });
@@ -421,7 +421,7 @@ export async function deleteEntity(id, byAccountId) {
       action:      'delete',
       entityType:  entity.type,
       entityId:    id,
-      entityTitle: entity.title || entity.name || id,
+      entityTitle: entity.title || entity.name || (entity.body ? entity.body.slice(0,60) : null) || id,
       byAccountId,
       at:          now,
     });
@@ -524,10 +524,18 @@ export async function saveEdge(edge, byAccountId) {
 
     await tx.objectStore(STORES.EDGES).put(saved);
     await _addToDirtyQueue(tx, 'dirtyEdges', saved.id);
+    // Fetch fromEntity title for audit log readability
+    let _linkTitle = null;
+    try {
+      const _fe = await db.get(STORES.ENTITIES, saved.fromId);
+      if (_fe) _linkTitle = _fe.title || _fe.name || (_fe.body ? _fe.body.slice(0,60) : null) || saved.fromId;
+    } catch {}
+
     await _appendAuditLog(tx, {
       action:      'link',
       entityType:  saved.fromType  || null,
       entityId:    saved.fromId,
+      entityTitle: _linkTitle,
       field:       saved.relation,
       newValue:    saved.toId,
       byAccountId,
@@ -563,10 +571,18 @@ export async function deleteEdge(id, byAccountId) {
     const tx  = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
 
     await tx.objectStore(STORES.EDGES).delete(id);
+    // Fetch fromEntity title for audit log readability
+    let _ulTitle = null;
+    try {
+      const _ufe = await db.get(STORES.ENTITIES, edge.fromId);
+      if (_ufe) _ulTitle = _ufe.title || _ufe.name || (_ufe.body ? _ufe.body.slice(0,60) : null) || edge.fromId;
+    } catch {}
+
     await _appendAuditLog(tx, {
       action:      'unlink',
       entityType:  edge.fromType || null,
       entityId:    edge.fromId,
+      entityTitle: _ulTitle,
       field:       edge.relation,
       oldValue:    edge.toId,
       byAccountId,
