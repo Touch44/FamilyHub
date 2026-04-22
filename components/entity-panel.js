@@ -820,6 +820,33 @@ function _renderFieldValue(wrap, field) {
       break;
     }
 
+    // ── TIME ────────────────────────────────────────────── //
+    case 'time': {
+      const display = document.createElement('span');
+      display.className = 'panel-field-display';
+      display.style.cssText = `
+        cursor: pointer; padding: var(--space-1) var(--space-2);
+        border-radius: var(--radius-sm); font-size: var(--text-sm);
+        display: inline-block;
+      `;
+
+      // Format "HH:MM" → "6:00 AM" for display
+      if (value) {
+        const [hh, mm] = value.split(':').map(Number);
+        const ampm = hh >= 12 ? 'PM' : 'AM';
+        const h12  = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
+        display.textContent = `${h12}:${String(mm).padStart(2,'0')} ${ampm}`;
+        display.style.color = 'var(--color-text)';
+      } else {
+        display.textContent = '—';
+        display.style.color = 'var(--color-text-muted)';
+      }
+
+      display.addEventListener('click', () => _editTime(wrap, field));
+      wrap.appendChild(display);
+      break;
+    }
+
     // ── URL ──────────────────────────────────────────────── //
     case 'url': {
       if (value) {
@@ -972,6 +999,39 @@ function _editDate(wrap, field) {
     const isoVal = val ? (field.type === 'datetime' ? new Date(val).toISOString() : val) : null;
     if (isoVal !== current) {
       _entity[field.key] = isoVal;
+      await _save();
+    }
+    _renderFieldValue(wrap, field);
+  };
+
+  input.addEventListener('blur', commit);
+  input.addEventListener('change', () => input.blur());
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { input.value = current; input.blur(); }
+  });
+}
+
+function _editTime(wrap, field) {
+  const current = _entity[field.key] ?? '06:00';
+  wrap.innerHTML = '';
+
+  const input = document.createElement('input');
+  input.type      = 'time';
+  input.className = 'input';
+  input.step      = '600'; // 10-minute increments
+  input.value     = current.slice(0, 5); // 'HH:MM'
+  input.style.cssText = 'padding: var(--space-1) var(--space-2); font-size: var(--text-sm); width: 130px;';
+  wrap.appendChild(input);
+  input.focus();
+
+  const commit = async () => {
+    const val = input.value || '06:00';
+    if (val !== current) {
+      _entity[field.key] = val;
+      // Also update _dateTimeISO so calendar refreshes correctly
+      if (field.key === 'dueTime' && _entity.dueDate) {
+        _entity._dateTimeISO = `${_entity.dueDate}T${val}:00`;
+      }
       await _save();
     }
     _renderFieldValue(wrap, field);
