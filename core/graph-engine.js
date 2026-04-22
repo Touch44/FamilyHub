@@ -639,6 +639,29 @@ const BUILT_IN_ENTITY_TYPES = [
     ],
   },
 
+  // ── 24. post ──────────────────────────────────────────── //
+  {
+    key:         'post',
+    label:       'Post',
+    labelPlural: 'Posts',
+    icon:        '📢',
+    color:       '#ef4444',
+    isBuiltIn:   true,
+    graphVisible: false,
+    defaultSort:  '-createdAt',
+    views:        ['wall'],
+    actions:      ['create', 'edit', 'delete'],
+    fields: [
+      field('body',     'richtext', { isTitle: false, label: 'Content' }),
+      field('postType', 'select',   { label: 'Type',  options: ['Text', 'Photo', 'Link', 'Milestone'] }),
+      field('photoUrl', 'text',     { label: 'Photo URL', isTitle: false }),
+      field('linkUrl',  'text',     { label: 'Link URL',  isTitle: false }),
+      field('pinned',   'checkbox', { label: 'Pinned', isTitle: false }),
+      field('tags',     'tags',     { label: 'Tags' }),
+      field('author',   'relation', { label: 'Author', relatesTo: 'person' }),
+    ],
+  },
+
 ];
 
 // ── In-memory registry ────────────────────────────────────── //

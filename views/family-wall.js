@@ -92,12 +92,18 @@ async function _loadData() {
 
   const personMap = new Map(persons.map(p => [p.id, p]));
   const accountMap = new Map();
+  // accountToPersonMap: account.id → person entity
+  // Needed because saveEntity stamps createdBy = account.id (not memberId)
+  const accountToPersonMap = new Map();
   const accounts = authData?.accounts || [];
   for (const acct of accounts) {
     accountMap.set(acct.id, acct);
+    if (acct.memberId && personMap.has(acct.memberId)) {
+      accountToPersonMap.set(acct.id, personMap.get(acct.memberId));
+    }
   }
 
-  return { posts, persons, personMap, accountMap, allEdges };
+  return { posts, persons, personMap, accountMap, accountToPersonMap, allEdges };
 }
 
 async function _loadAllEdges() {
@@ -270,7 +276,7 @@ function _buildFilterBar(container, persons, posts) {
 
 // ── DOM: Compose Box ──────────────────────────────────────── //
 
-function _buildComposeBox(container, personMap) {
+function _buildComposeBox(container, personMap, accountToPersonMap) {
   const account = getAccount();
   if (!account) return;
   const person = personMap.get(account.memberId);
@@ -278,7 +284,7 @@ function _buildComposeBox(container, personMap) {
   const compose = document.createElement('div');
   compose.className = 'fw-compose';
 
-  // Header row: avatar + type selector
+  // Header row: avatar + name
   const header = document.createElement('div');
   header.className = 'fw-compose-header';
 
@@ -295,12 +301,115 @@ function _buildComposeBox(container, personMap) {
 
   compose.appendChild(header);
 
+  // Resolved URL/dataURL to use when posting
+  let resolvedPhotoValue = null; // data-URL from file upload or typed URL
+
   // Text area
   const textarea = document.createElement('textarea');
   textarea.className = 'fw-compose-text';
   textarea.placeholder = "What's happening in the family?";
   textarea.rows = 3;
+
+  // ── Paste detection: auto-switch to Link mode on URL paste ──
+  textarea.addEventListener('paste', (e) => {
+    // Small delay so paste content is in the textarea
+    setTimeout(() => {
+      const text = textarea.value.trim();
+      const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
+      if (urlMatch && selectedType === 'Text') {
+        // Switch to Link mode and populate URL field
+        selectedType = 'Link';
+        urlInput.value = urlMatch[0];
+        urlInput.style.display = '';
+        fileSection.style.display = 'none';
+        typeGroup.querySelectorAll('.fw-compose-type-btn').forEach(b => b.classList.remove('active'));
+        typeGroup.querySelector('[data-type="Link"]')?.classList.add('active');
+      }
+    }, 0);
+  });
+
   compose.appendChild(textarea);
+
+  // ── Photo section: URL input + device upload ──
+  const fileSection = document.createElement('div');
+  fileSection.className = 'fw-compose-file-section';
+  fileSection.style.display = 'none';
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text';
+  urlInput.className = 'input fw-compose-url';
+  urlInput.placeholder = 'Paste image URL or link...';
+  urlInput.style.width = '100%';
+
+  // Preview image when URL is typed
+  const imgPreview = document.createElement('img');
+  imgPreview.className = 'fw-compose-img-preview';
+  imgPreview.style.display = 'none';
+  urlInput.addEventListener('input', () => {
+    const url = urlInput.value.trim();
+    if (_isImageUrl(url)) {
+      imgPreview.src = url;
+      imgPreview.style.display = '';
+    } else {
+      imgPreview.style.display = 'none';
+    }
+  });
+
+  // ── Device file picker ──
+  const fileRow = document.createElement('div');
+  fileRow.className = 'fw-compose-file-row';
+
+  const fileLabel = document.createElement('label');
+  fileLabel.className = 'btn btn-ghost btn-xs fw-file-label';
+  fileLabel.textContent = '📁 Choose from device';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.style.display = 'none';
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      resolvedPhotoValue = ev.target.result; // base64 data URL
+      imgPreview.src = resolvedPhotoValue;
+      imgPreview.style.display = '';
+      urlInput.value = '';  // clear URL field — using uploaded file
+      fileLabel.textContent = `✅ ${file.name}`;
+    };
+    reader.readAsDataURL(file);
+  });
+  fileLabel.appendChild(fileInput);
+
+  const clearFileBtn = document.createElement('button');
+  clearFileBtn.className = 'btn btn-ghost btn-xs';
+  clearFileBtn.textContent = '✕ Clear';
+  clearFileBtn.style.display = 'none';
+  clearFileBtn.addEventListener('click', () => {
+    resolvedPhotoValue = null;
+    fileInput.value = '';
+    imgPreview.src = '';
+    imgPreview.style.display = 'none';
+    fileLabel.textContent = '📁 Choose from device';
+    clearFileBtn.style.display = 'none';
+  });
+
+  // Show clear button after file selected
+  fileInput.addEventListener('change', () => {
+    clearFileBtn.style.display = fileInput.files?.length ? '' : 'none';
+  });
+
+  fileRow.append(fileLabel, clearFileBtn);
+  fileSection.append(urlInput, fileRow, imgPreview);
+  compose.appendChild(fileSection);
+
+  // Tag input
+  const tagInput = document.createElement('input');
+  tagInput.type = 'text';
+  tagInput.className = 'input fw-compose-tag-input';
+  tagInput.placeholder = 'Tags (comma-separated)';
+  compose.appendChild(tagInput);
 
   // Options row
   const optRow = document.createElement('div');
@@ -320,11 +429,15 @@ function _buildComposeBox(container, personMap) {
   for (const tb of typeButtons) {
     const btn = document.createElement('button');
     btn.className = 'btn btn-ghost btn-xs fw-compose-type-btn';
+    btn.dataset.type = tb.type;
     btn.textContent = tb.label;
     btn.addEventListener('click', () => {
       selectedType = tb.type;
+      const showFile = tb.type === 'Photo' || tb.type === 'Link';
+      fileSection.style.display = showFile ? '' : 'none';
       urlInput.placeholder = tb.type === 'Photo' ? 'Paste image URL...' : 'Paste link URL...';
-      urlInput.style.display = (tb.type === 'Photo' || tb.type === 'Link') ? '' : 'none';
+      // Show/hide device upload only for Photo
+      fileRow.style.display = tb.type === 'Photo' ? '' : 'none';
       // Highlight active
       typeGroup.querySelectorAll('.fw-compose-type-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -332,21 +445,6 @@ function _buildComposeBox(container, personMap) {
     typeGroup.appendChild(btn);
   }
   optRow.appendChild(typeGroup);
-
-  // URL input (hidden by default)
-  const urlInput = document.createElement('input');
-  urlInput.type = 'text';
-  urlInput.className = 'input fw-compose-url';
-  urlInput.placeholder = 'Paste image URL...';
-  urlInput.style.display = 'none';
-  compose.appendChild(urlInput);
-
-  // Tag input
-  const tagInput = document.createElement('input');
-  tagInput.type = 'text';
-  tagInput.className = 'input fw-compose-tag-input';
-  tagInput.placeholder = 'Tags (comma-separated)';
-  compose.appendChild(tagInput);
 
   // Action row
   const actionRow = document.createElement('div');
@@ -365,22 +463,25 @@ function _buildComposeBox(container, personMap) {
 
     try {
       const tags = tagInput.value.split(',').map(t => t.trim()).filter(Boolean);
-      const url = urlInput.value.trim();
+      // Photo: prefer file upload data URL, then typed URL
+      const photoVal = selectedType === 'Photo'
+        ? (resolvedPhotoValue || urlInput.value.trim())
+        : null;
+      const linkVal = selectedType === 'Link' ? urlInput.value.trim() : null;
 
       const postEntity = {
-        type:     'post',
+        type:            'post',
         body,
-        postType: selectedType,
-        photoUrl: selectedType === 'Photo' ? url : null,
-        linkUrl:  selectedType === 'Link' ? url : null,
-        pinned:   false,
+        postType:        selectedType,
+        photoUrl:        photoVal,
+        linkUrl:         linkVal,
+        pinned:          false,
         tags,
         _authorPersonId: account.memberId,
       };
 
       const saved = await saveEntity(postEntity, account.id);
 
-      // Create author edge
       if (account.memberId) {
         await saveEdge({
           fromId: account.memberId,
@@ -393,7 +494,13 @@ function _buildComposeBox(container, personMap) {
       textarea.value = '';
       urlInput.value = '';
       tagInput.value = '';
-      urlInput.style.display = 'none';
+      fileSection.style.display = 'none';
+      resolvedPhotoValue = null;
+      imgPreview.src = '';
+      imgPreview.style.display = 'none';
+      fileLabel.textContent = '📁 Choose from device';
+      fileInput.value = '';
+      clearFileBtn.style.display = 'none';
       selectedType = 'Text';
       typeGroup.querySelectorAll('.fw-compose-type-btn').forEach(b => b.classList.remove('active'));
 
@@ -413,7 +520,7 @@ function _buildComposeBox(container, personMap) {
 
 // ── DOM: Post Card ────────────────────────────────────────── //
 
-async function _buildPostCard(post, personMap) {
+async function _buildPostCard(post, personMap, accountToPersonMap = new Map()) {
   const card = document.createElement('article');
   card.className = 'fw-post-card';
   card.dataset.postId = post.id;
@@ -651,7 +758,11 @@ async function _buildPostCard(post, personMap) {
   // Existing comments
   const comments = await _loadComments(commentIds);
   for (const comment of comments) {
-    const commentPerson = personMap.get(comment.createdBy);
+    // comment.createdBy = account.id; comment._authorPersonId = account.memberId (if set)
+    // Try memberId first, then account lookup, then fallback
+    const commentPerson = personMap.get(comment._authorPersonId)
+      || accountToPersonMap.get(comment.createdBy)
+      || null;
     const commentEl = _buildCommentEl(comment, commentPerson);
     thread.appendChild(commentEl);
   }
@@ -674,12 +785,13 @@ async function _buildPostCard(post, personMap) {
 
     commentPostBtn.disabled = true;
     try {
-      // Save comment as a note entity
+      // Save comment as a note entity with _authorPersonId for reliable person lookup
       const commentEntity = await saveEntity({
-        type: 'note',
-        title: text.slice(0, 80),
-        body: text,
-        category: 'Comment',
+        type:            'note',
+        title:           text.slice(0, 80),
+        body:            text,
+        category:        'Comment',
+        _authorPersonId: account?.memberId || null,
       }, account?.id);
 
       // Create edge: comment → post
@@ -883,6 +995,29 @@ function _injectStyles() {
     .fw-compose-url, .fw-compose-tag-input {
       font-size: var(--text-sm);
       padding: var(--space-1-5) var(--space-2-5);
+    }
+    .fw-compose-file-section {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+    .fw-compose-file-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    .fw-file-label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+    }
+    .fw-compose-img-preview {
+      width: 100%;
+      max-height: 200px;
+      object-fit: cover;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--color-border);
     }
     .fw-compose-options {
       display: flex;
@@ -1183,7 +1318,7 @@ async function renderWall(params = {}) {
   `;
 
   try {
-    const { posts, persons, personMap, accountMap } = await _loadData();
+    const { posts, persons, personMap, accountToPersonMap } = await _loadData();
     const filtered = _filterPosts(posts, personMap);
 
     viewEl.innerHTML = '';
@@ -1192,7 +1327,7 @@ async function renderWall(params = {}) {
     _buildFilterBar(viewEl, persons, posts);
 
     // Compose box
-    _buildComposeBox(viewEl, personMap);
+    _buildComposeBox(viewEl, personMap, accountToPersonMap);
 
     // Posts
     if (filtered.length === 0) {
@@ -1204,7 +1339,7 @@ async function renderWall(params = {}) {
       viewEl.appendChild(empty);
     } else {
       for (const post of filtered) {
-        const card = await _buildPostCard(post, personMap);
+        const card = await _buildPostCard(post, personMap, accountToPersonMap);
         viewEl.appendChild(card);
       }
     }
