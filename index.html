@@ -665,6 +665,7 @@
   import { initDB }                  from './core/db.js';
   import { initGraphEngine }         from './core/graph-engine.js';
   import { initEntityPanel }         from './components/entity-panel.js';
+  import { initEntityForm }          from './components/entity-form.js';
   import { initAuth, isLoggedIn, isFirstRun, doFirstRun, doLogin, doLogout }
                                      from './core/auth.js';
 
@@ -861,6 +862,7 @@
       await initDB();
       await initGraphEngine();
       initEntityPanel();
+      initEntityForm();
       await initAuth();
 
       // 11. Service Worker registration (Blueprint §8.2)

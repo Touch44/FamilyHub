@@ -36,6 +36,7 @@ const SHELL_FILES = [
   './core/auth.js',
   './core/graph-engine.js',
   './components/entity-panel.js',
+  './components/entity-form.js',
 ];
 
 // ── Patterns: Never Cache ─────────────────────────────────── //
