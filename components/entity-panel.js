@@ -137,16 +137,23 @@ export function closePanel() {
 function _renderHeader() {
   if (!_entity || !_config) return;
 
-  // Rebuild the entire header from scratch every time
-  // This makes it immune to any cached version of index.html
   const headerEl = document.getElementById('entity-panel-header');
   if (!headerEl) return;
   headerEl.innerHTML = '';
+  // All layout via inline styles — works regardless of which CSS version is cached
+  headerEl.style.display        = 'flex';
+  headerEl.style.flexDirection  = 'column';
+  headerEl.style.gap            = '8px';
+  headerEl.style.padding        = '12px 16px';
+  headerEl.style.borderBottom   = '1px solid var(--color-border)';
+  headerEl.style.flexShrink     = '0';
 
-  // ── Row 1: type badge · saving indicator · action buttons · close ──
+  // ── Row 1: type badge · saving indicator · actions · close ──
   const topRow = document.createElement('div');
-  topRow.id = 'entity-panel-header-top';
-  topRow.style.cssText = 'display:flex;align-items:center;gap:var(--space-2);';
+  topRow.style.display    = 'flex';
+  topRow.style.alignItems = 'center';
+  topRow.style.gap        = '8px';
+  topRow.style.width      = '100%';
 
   const badge = document.createElement('span');
   badge.id = 'entity-panel-type-badge';
@@ -167,7 +174,10 @@ function _renderHeader() {
 
   const actionsDiv = document.createElement('div');
   actionsDiv.id = 'entity-panel-header-actions';
-  actionsDiv.style.cssText = 'display:flex;gap:var(--space-1);align-items:center;margin-left:auto;';
+  actionsDiv.style.display    = 'flex';
+  actionsDiv.style.gap        = '4px';
+  actionsDiv.style.alignItems = 'center';
+  actionsDiv.style.marginLeft = 'auto';
   topRow.appendChild(actionsDiv);
   _headerActions = actionsDiv;
 
@@ -175,33 +185,39 @@ function _renderHeader() {
   closeBtn.id = 'entity-panel-close';
   closeBtn.setAttribute('aria-label', 'Close entity panel');
   closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:1rem;padding:4px;border-radius:4px;line-height:1;flex-shrink:0;';
   closeBtn.addEventListener('click', closePanel);
   topRow.appendChild(closeBtn);
   _panelClose = closeBtn;
 
   headerEl.appendChild(topRow);
 
-  // ── Row 2: title (full width, large heading) ──────────────
+  // ── Row 2: entity title — full width on its own line ───────
   const titleRow = document.createElement('div');
-  titleRow.id = 'entity-panel-title-row';
+  titleRow.style.display    = 'flex';
+  titleRow.style.alignItems = 'center';
+  titleRow.style.width      = '100%';
+  titleRow.style.minHeight  = '32px';
 
   const titleField = _config.fields.find(f => f.isTitle);
-  const titleVal   = titleField ? (_entity[titleField.key] || '') : (_entity.title || _entity.name || '');
+  const titleVal   = titleField
+    ? (_entity[titleField.key] || '')
+    : (_entity.title || _entity.name || '');
 
   const titleSpan = document.createElement('span');
   titleSpan.id = 'entity-panel-title';
   titleSpan.textContent = titleVal || 'Untitled';
   titleSpan.title = 'Click to edit title';
+  titleSpan.style.cssText = 'font-family:var(--font-heading,Georgia,serif);font-size:1.3125rem;font-weight:700;color:var(--color-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;line-height:1.3;';
   titleSpan.addEventListener('click', () => _makeTitleEditable(titleField));
   titleRow.appendChild(titleSpan);
   _panelTitle = titleSpan;
 
   headerEl.appendChild(titleRow);
 
-  // ── Action buttons ─────────────────────────────────────────
+  // ── Populate action buttons ────────────────────────────────
   _renderHeaderActions();
 }
-
 function _makeTitleEditable(titleField) {
   if (!_panelTitle || !titleField) return;
 
@@ -541,8 +557,8 @@ function _renderPropertiesTab(container) {
   meta.style.cssText = 'margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--color-border);';
   meta.innerHTML = `
     <div style="font-size: var(--text-xs); color: var(--color-text-muted); display: flex; flex-direction: column; gap: var(--space-1);">
-      <span>Created: ${_formatDate(_entity.createdAt)}</span>
-      <span>Updated: ${_formatDate(_entity.updatedAt)}</span>
+      <span>Created: ${_formatTimestamp(_entity.createdAt)}</span>
+      <span>Updated: ${_formatTimestamp(_entity.updatedAt)}</span>
       <span style="opacity: 0.6;">ID: ${_entity.id}</span>
     </div>
   `;
@@ -689,8 +705,7 @@ function _renderFieldValue(wrap, field) {
     }
 
     // ── DATE / DATETIME ─────────────────────────────────── //
-    case 'date':
-    case 'datetime': {
+    case 'date': {
       const display = document.createElement('span');
       display.className = 'panel-field-display';
       display.style.cssText = `
@@ -699,6 +714,30 @@ function _renderFieldValue(wrap, field) {
         display: inline-block;
       `;
       display.textContent = value ? _formatDate(value) : '—';
+      display.style.color = value ? 'var(--color-text)' : 'var(--color-text-muted)';
+
+      display.addEventListener('click', () => {
+        _editDate(wrap, field);
+      });
+      wrap.appendChild(display);
+      break;
+    }
+
+    case 'datetime': {
+      const display = document.createElement('span');
+      display.className = 'panel-field-display';
+      display.style.cssText = `
+        cursor: pointer; padding: var(--space-1) var(--space-2);
+        border-radius: var(--radius-sm); font-size: var(--text-sm);
+        display: inline-block;
+      `;
+      // Show date + time for datetime fields
+      display.textContent = value
+        ? new Date(value).toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', hour12: true,
+          })
+        : '—';
       display.style.color = value ? 'var(--color-text)' : 'var(--color-text-muted)';
 
       display.addEventListener('click', () => {
@@ -1552,11 +1591,45 @@ function _getTitleKey(type) {
 }
 
 /** Format ISO date string for display */
+/** Format ISO date string for display in date fields (date-only, no time) */
 function _formatDate(iso) {
   if (!iso) return '';
   try {
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
+/**
+ * Format a full ISO timestamp for Created/Updated footers.
+ * Shows date + time + timezone offset so the user knows exactly when.
+ * e.g. "Apr 21, 2026, 2:34 PM (UTC+8)"
+ */
+function _formatTimestamp(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    // Date + time in user's locale
+    const base = d.toLocaleString(undefined, {
+      year:   'numeric',
+      month:  'short',
+      day:    'numeric',
+      hour:   'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    // Timezone offset string e.g. "UTC+8" or "UTC-5"
+    const offsetMin = -d.getTimezoneOffset();
+    const sign      = offsetMin >= 0 ? '+' : '-';
+    const absH      = Math.floor(Math.abs(offsetMin) / 60);
+    const absM      = Math.abs(offsetMin) % 60;
+    const tzLabel   = absM === 0
+      ? `UTC${sign}${absH}`
+      : `UTC${sign}${absH}:${String(absM).padStart(2, '0')}`;
+    return `${base} (${tzLabel})`;
   } catch {
     return iso;
   }
