@@ -1105,7 +1105,10 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
         if (startDs && endDs && startDs !== endDs) return true; // multi-day
       }
       const h = _isoToLocalHourFrac(dateISO);
-      return h !== null && h >= HOUR_START && h < HOUR_END;
+      if (h === null) return false;
+      // Tasks before HOUR_START are clamped to grid top rather than hidden
+      if (it.entityType === 'task') return h < HOUR_END;
+      return h >= HOUR_START && h < HOUR_END;
     });
 
     if (timedItems.length === 0) continue;
@@ -1134,7 +1137,7 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
           endH   = Math.min(startH + Math.max(_durationHours(it.entity.date, it.entity.endDate), 0.5), HOUR_END);
         }
       } else if (it.entityType === 'task') {
-        startH = _isoToLocalHourFrac(dateISO) ?? 6;
+        startH = Math.max(_isoToLocalHourFrac(dateISO) ?? 6, HOUR_START); // clamp to grid top
         endH   = Math.min(startH + 0.5, HOUR_END);
       } else {
         startH = _isoToLocalHourFrac(dateISO) ?? HOUR_START;

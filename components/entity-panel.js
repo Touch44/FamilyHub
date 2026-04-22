@@ -1012,6 +1012,18 @@ function _editDate(wrap, field) {
 }
 
 function _editTime(wrap, field) {
+  // Guard: dueTime requires dueDate — without it the task disappears from calendar
+  if (field.key === 'dueTime' && !_entity.dueDate) {
+    wrap.innerHTML = '';
+    const msg = document.createElement('span');
+    msg.style.cssText = 'font-size:var(--text-sm);color:var(--color-warning-text);padding:var(--space-1) var(--space-2);';
+    msg.textContent = '⚠ Set a Due Date first';
+    wrap.appendChild(msg);
+    // Auto-clear after 2.5s
+    setTimeout(() => _renderFieldValue(wrap, field), 2500);
+    return;
+  }
+
   const current = _entity[field.key] ?? '06:00';
   wrap.innerHTML = '';
 
@@ -1028,7 +1040,7 @@ function _editTime(wrap, field) {
     const val = input.value || '06:00';
     if (val !== current) {
       _entity[field.key] = val;
-      // Also update _dateTimeISO so calendar refreshes correctly
+      // Update _dateTimeISO so calendar immediately reflects the new time
       if (field.key === 'dueTime' && _entity.dueDate) {
         _entity._dateTimeISO = `${_entity.dueDate}T${val}:00`;
       }

@@ -451,27 +451,39 @@ function _buildFieldControl(field, config) {
     // ── TIME ─────────────────────────────────────────────── //
     case 'time': {
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+      wrap.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;';
 
       const input = document.createElement('input');
       input.type      = 'time';
       input.id        = `ef-field-${field.key}`;
       input.className = 'input';
       input.step      = '600'; // 10-minute increments
-      // Default to 06:00 if no value set
       input.value     = existing || '06:00';
       if (field.placeholder) input.placeholder = field.placeholder;
+
+      // Only save dueTime when dueDate is also set — prevents disappearing from calendar
       input.addEventListener('change', () => {
+        const dateKey = field.key === 'dueTime' ? 'dueDate' : null;
+        if (dateKey && !_draft[dateKey]) {
+          // No date set — don't persist time, show hint
+          hintEl.textContent = '⚠ Set a Due Date first';
+          hintEl.style.color = 'var(--color-warning-text)';
+          input.value = existing || '06:00';
+          return;
+        }
         _draft[field.key] = input.value || '06:00';
+        hintEl.textContent = field.helpText || '10-min steps';
+        hintEl.style.color = 'var(--color-text-muted)';
       });
-      // Init draft
-      if (!existing) _draft[field.key] = '06:00';
+      // Init draft only if dueDate exists
+      if (!existing && _draft.dueDate) _draft[field.key] = '06:00';
+      else if (!existing) _draft[field.key] = null; // no date = no time
 
-      const hint = document.createElement('span');
-      hint.style.cssText = 'font-size:var(--text-xs);color:var(--color-text-muted);white-space:nowrap;';
-      hint.textContent = field.helpText || '10-min steps';
+      const hintEl = document.createElement('span');
+      hintEl.style.cssText = 'font-size:var(--text-xs);color:var(--color-text-muted);white-space:nowrap;';
+      hintEl.textContent = field.helpText || '10-min steps';
 
-      wrap.append(input, hint);
+      wrap.append(input, hintEl);
       return wrap;
     }
 
