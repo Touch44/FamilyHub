@@ -16,7 +16,7 @@ import { getEntityTypeConfig, getAllEntityTypes, getBacklinks,
 import { on, off, emit, EVENTS } from '../core/events.js';
 
 // ── DOM refs (cached once on init) ───────────────────────── //
-let _panel, _panelBody, _panelTitle, _panelTypeBadge, _panelClose, _savingIndicator;
+let _panel, _panelBody, _panelTitle, _panelTypeBadge, _panelClose, _savingIndicator, _headerActions;
 
 // ── State ────────────────────────────────────────────────── //
 let _entity     = null;   // currently open entity
@@ -39,6 +39,7 @@ export function initEntityPanel() {
   _panelTypeBadge = document.getElementById('entity-panel-type-badge');
   _panelClose     = document.getElementById('entity-panel-close');
   _savingIndicator= document.getElementById('panel-saving-indicator');
+  _headerActions  = document.getElementById('entity-panel-header-actions');
 
   if (!_panel || !_panelBody) {
     console.warn('[entity-panel] Panel DOM not found — skipping init.');
@@ -168,6 +169,9 @@ function _renderHeader() {
       _makeTitleEditable(titleField);
     });
   }
+
+  // Header action buttons
+  _renderHeaderActions();
 }
 
 function _makeTitleEditable(titleField) {
@@ -209,6 +213,230 @@ function _makeTitleEditable(titleField) {
 }
 
 // ════════════════════════════════════════════════════════════
+// HEADER ACTION BUTTONS
+// ════════════════════════════════════════════════════════════
+
+function _renderHeaderActions() {
+  if (!_headerActions || !_entity || !_config) return;
+
+  _headerActions.innerHTML = '';
+  const actions = _config.actions || [];
+  const btnStyle = 'font-size: var(--text-xs); padding: 2px var(--space-2); min-width: 0;';
+
+  // Complete (tasks only)
+  if (_entity.type === 'task' && _entity.status !== 'Done') {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-primary btn-xs';
+    btn.textContent = '✓';
+    btn.title       = 'Mark complete';
+    btn.style.cssText = btnStyle;
+    btn.addEventListener('click', async () => {
+      _entity.status = 'Done';
+      await _save();
+      _renderHeader();
+      _renderActiveTab();
+    });
+    _headerActions.appendChild(btn);
+  }
+
+  // Duplicate
+  if (actions.includes('duplicate')) {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-ghost btn-xs';
+    btn.textContent = '⧉';
+    btn.title       = 'Duplicate';
+    btn.style.cssText = btnStyle;
+    btn.addEventListener('click', async () => {
+      const dup = { ..._entity };
+      delete dup.id;
+      delete dup.createdAt;
+      delete dup.updatedAt;
+      const titleK = _getTitleKey(dup.type);
+      if (titleK && dup[titleK]) dup[titleK] += ' (copy)';
+      const saved = await saveEntity(dup);
+      openPanel(saved.id);
+    });
+    _headerActions.appendChild(btn);
+  }
+
+  // Archive
+  if (actions.includes('archive') || actions.includes('edit')) {
+    const isArchived = _entity.status === 'Archived' || _entity.archived;
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-ghost btn-xs';
+    btn.textContent = isArchived ? '📂' : '📦';
+    btn.title       = isArchived ? 'Unarchive' : 'Archive';
+    btn.style.cssText = btnStyle;
+    btn.addEventListener('click', async () => {
+      if (_entity.status !== undefined) {
+        _entity.status = isArchived ? 'Active' : 'Archived';
+      } else {
+        _entity.archived = !isArchived;
+      }
+      await _save();
+      _renderHeader();
+      _renderActiveTab();
+    });
+    _headerActions.appendChild(btn);
+  }
+
+  // Add to Project
+  if (_entity.type !== 'project') {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-ghost btn-xs';
+    btn.textContent = '📁';
+    btn.title       = 'Add to project';
+    btn.style.cssText = btnStyle;
+    btn.addEventListener('click', () => {
+      _showProjectPicker();
+    });
+    _headerActions.appendChild(btn);
+  }
+
+  // Convert
+  if (actions.includes('convert')) {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-ghost btn-xs';
+    btn.textContent = '↺';
+    btn.title       = 'Convert to…';
+    btn.style.cssText = btnStyle;
+    btn.addEventListener('click', () => {
+      _showConvertDropdown();
+    });
+    _headerActions.appendChild(btn);
+  }
+
+  // Delete
+  if (actions.includes('delete')) {
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-ghost btn-xs';
+    btn.textContent = '🗑';
+    btn.title       = 'Delete';
+    btn.style.cssText = btnStyle + ' color: var(--color-danger);';
+    btn.addEventListener('click', () => {
+      _confirmDelete();
+    });
+    _headerActions.appendChild(btn);
+  }
+}
+
+/** Show a dropdown to pick a project and link this entity to it */
+async function _showProjectPicker() {
+  if (!_entity) return;
+
+  // Create dropdown below the header actions
+  const existing = document.querySelector('.panel-project-picker');
+  if (existing) { existing.remove(); return; }
+
+  const { getEntitiesByType } = await import('../core/db.js');
+  const projects = (await getEntitiesByType('project')).filter(p => !p.deleted);
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'panel-project-picker';
+  dropdown.style.cssText = `
+    position: absolute; top: 100%; right: var(--space-4); z-index: 10;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+    padding: var(--space-2); min-width: 180px; max-height: 200px;
+    overflow-y: auto;
+  `;
+
+  if (projects.length === 0) {
+    dropdown.innerHTML = '<div style="font-size: var(--text-xs); color: var(--color-text-muted); padding: var(--space-2);">No projects yet</div>';
+  } else {
+    for (const proj of projects) {
+      const item = document.createElement('div');
+      item.style.cssText = `
+        display: flex; align-items: center; gap: var(--space-2);
+        padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-sm);
+        cursor: pointer; font-size: var(--text-sm);
+        transition: background var(--transition-fast);
+      `;
+      item.textContent = `📁 ${proj.name || 'Untitled'}`;
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--color-surface-2)'; });
+      item.addEventListener('mouseleave', () => { item.style.background = 'none'; });
+      item.addEventListener('click', async () => {
+        await saveEdge({
+          fromId:   _entity.id,
+          fromType: _entity.type,
+          toId:     proj.id,
+          toType:   'project',
+          relation: 'project',
+        });
+        dropdown.remove();
+        _renderActiveTab();
+      });
+      dropdown.appendChild(item);
+    }
+  }
+
+  // Position relative to header
+  const header = document.getElementById('entity-panel-header');
+  if (header) {
+    header.style.position = 'relative';
+    header.appendChild(dropdown);
+  }
+
+  // Close on outside click
+  const closeHandler = (e) => {
+    if (!dropdown.contains(e.target)) {
+      dropdown.remove();
+      document.removeEventListener('click', closeHandler, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeHandler, true), 10);
+}
+
+/** Show convert type dropdown from header */
+function _showConvertDropdown() {
+  const existing = document.querySelector('.panel-convert-picker');
+  if (existing) { existing.remove(); return; }
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'panel-convert-picker';
+  dropdown.style.cssText = `
+    position: absolute; top: 100%; right: var(--space-4); z-index: 10;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+    padding: var(--space-2); min-width: 180px; max-height: 250px;
+    overflow-y: auto; display: flex; flex-wrap: wrap; gap: var(--space-1);
+  `;
+
+  const types = getAllEntityTypes();
+  for (const t of types) {
+    if (t.key === _entity.type) continue;
+    const btn = document.createElement('button');
+    btn.className   = 'btn btn-ghost btn-xs';
+    btn.textContent = `${t.icon} ${t.label}`;
+    btn.style.fontSize = 'var(--text-xs)';
+    btn.addEventListener('click', async () => {
+      try {
+        const converted = await convertEntity(_entity.id, t.key);
+        dropdown.remove();
+        openPanel(converted.id);
+      } catch (err) {
+        console.error('[entity-panel] Convert failed:', err);
+      }
+    });
+    dropdown.appendChild(btn);
+  }
+
+  const header = document.getElementById('entity-panel-header');
+  if (header) {
+    header.style.position = 'relative';
+    header.appendChild(dropdown);
+  }
+
+  const closeHandler = (e) => {
+    if (!dropdown.contains(e.target)) {
+      dropdown.remove();
+      document.removeEventListener('click', closeHandler, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeHandler, true), 10);
+}
+
+// ════════════════════════════════════════════════════════════
 // TABS
 // ════════════════════════════════════════════════════════════
 
@@ -216,6 +444,7 @@ const TAB_DEFS = [
   { key: 'properties', label: 'Properties' },
   { key: 'relations',  label: 'Relations' },
   { key: 'activity',   label: 'Activity' },
+  { key: 'graph',      label: 'Graph' },
 ];
 
 function _renderTabs() {
@@ -259,10 +488,8 @@ function _renderActiveTab() {
     case 'properties': _renderPropertiesTab(container); break;
     case 'relations':  _renderRelationsTab(container);  break;
     case 'activity':   _renderActivityTab(container);   break;
+    case 'graph':      _renderGraphTab(container);      break;
   }
-
-  // Action row always at the bottom
-  _renderActionRow(container);
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1035,6 +1262,164 @@ async function _renderActivityTab(container) {
   } catch (err) {
     console.error('[entity-panel] Activity tab error:', err);
     container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-4);">Failed to load activity.</div>';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// GRAPH TAB (mini — focus mode)
+// ════════════════════════════════════════════════════════════
+
+async function _renderGraphTab(container) {
+  if (!_entity) return;
+
+  try {
+    const neighbors = await getNeighbors(_entity.id);
+
+    container.innerHTML = '';
+
+    // Mini graph header
+    const header = document.createElement('div');
+    header.style.cssText = 'text-align: center; padding: var(--space-4) 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs);';
+    header.textContent = `${neighbors.length} connection${neighbors.length !== 1 ? 's' : ''}`;
+    container.appendChild(header);
+
+    if (neighbors.length === 0) {
+      container.innerHTML += `
+        <div class="empty-state" style="padding: var(--space-8);">
+          <div class="empty-state-icon">🕸️</div>
+          <div class="empty-state-title">No connections</div>
+          <div class="empty-state-desc">Link this ${_config.label.toLowerCase()} to other entities to see its graph.</div>
+        </div>
+      `;
+      return;
+    }
+
+    // Render a simple radial graph visualisation using SVG
+    const svgNS   = 'http://www.w3.org/2000/svg';
+    const size    = 280;
+    const cx      = size / 2;
+    const cy      = size / 2;
+    const centerR = 24;
+    const nodeR   = 16;
+    const orbitR  = size / 2 - 36;
+
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', String(size));
+    svg.style.cssText = 'display: block; margin: 0 auto;';
+
+    // Draw edges
+    const count = Math.min(neighbors.length, 12);
+    for (let i = 0; i < count; i++) {
+      const angle = (2 * Math.PI * i) / count - Math.PI / 2;
+      const nx    = cx + orbitR * Math.cos(angle);
+      const ny    = cy + orbitR * Math.sin(angle);
+
+      const line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', String(cx));
+      line.setAttribute('y1', String(cy));
+      line.setAttribute('x2', String(nx));
+      line.setAttribute('y2', String(ny));
+      line.setAttribute('stroke', 'var(--color-border)');
+      line.setAttribute('stroke-width', '1.5');
+      svg.appendChild(line);
+    }
+
+    // Center node
+    const centerCircle = document.createElementNS(svgNS, 'circle');
+    centerCircle.setAttribute('cx', String(cx));
+    centerCircle.setAttribute('cy', String(cy));
+    centerCircle.setAttribute('r', String(centerR));
+    centerCircle.setAttribute('fill', _config.color);
+    svg.appendChild(centerCircle);
+
+    const centerLabel = document.createElementNS(svgNS, 'text');
+    centerLabel.setAttribute('x', String(cx));
+    centerLabel.setAttribute('y', String(cy + 1));
+    centerLabel.setAttribute('text-anchor', 'middle');
+    centerLabel.setAttribute('dominant-baseline', 'central');
+    centerLabel.setAttribute('fill', '#fff');
+    centerLabel.setAttribute('font-size', '14');
+    centerLabel.textContent = _config.icon;
+    svg.appendChild(centerLabel);
+
+    // Neighbor nodes
+    for (let i = 0; i < count; i++) {
+      const angle    = (2 * Math.PI * i) / count - Math.PI / 2;
+      const nx       = cx + orbitR * Math.cos(angle);
+      const ny       = cy + orbitR * Math.sin(angle);
+      const neighbor = neighbors[i];
+
+      const entity   = await getEntity(neighbor.entityId);
+      const nConfig  = entity ? getEntityTypeConfig(entity.type) : null;
+
+      const circle = document.createElementNS(svgNS, 'circle');
+      circle.setAttribute('cx', String(nx));
+      circle.setAttribute('cy', String(ny));
+      circle.setAttribute('r', String(nodeR));
+      circle.setAttribute('fill', nConfig?.color || '#94A3B8');
+      circle.setAttribute('cursor', 'pointer');
+      circle.addEventListener('click', () => openPanel(neighbor.entityId));
+      svg.appendChild(circle);
+
+      const label = document.createElementNS(svgNS, 'text');
+      label.setAttribute('x', String(nx));
+      label.setAttribute('y', String(ny + 1));
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('dominant-baseline', 'central');
+      label.setAttribute('fill', '#fff');
+      label.setAttribute('font-size', '11');
+      label.setAttribute('cursor', 'pointer');
+      label.textContent = nConfig?.icon || '📎';
+      label.addEventListener('click', () => openPanel(neighbor.entityId));
+      svg.appendChild(label);
+    }
+
+    container.appendChild(svg);
+
+    // Legend list below graph
+    const legend = document.createElement('div');
+    legend.style.cssText = 'display: flex; flex-direction: column; gap: var(--space-1); padding-top: var(--space-3);';
+
+    for (let i = 0; i < count; i++) {
+      const neighbor = neighbors[i];
+      const entity   = await getEntity(neighbor.entityId);
+      if (!entity || entity.deleted) continue;
+
+      const nConfig = getEntityTypeConfig(entity.type);
+      const titleK  = _getTitleKey(entity.type);
+
+      const row = document.createElement('div');
+      row.style.cssText = `
+        display: flex; align-items: center; gap: var(--space-2);
+        padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-sm);
+        cursor: pointer; font-size: var(--text-xs);
+        transition: background var(--transition-fast);
+      `;
+      row.innerHTML = `
+        <span style="width: 10px; height: 10px; border-radius: var(--radius-full); background: ${nConfig?.color || '#94A3B8'}; flex-shrink: 0;"></span>
+        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${entity[titleK] || 'Untitled'}</span>
+        <span style="color: var(--color-text-muted);">${nConfig?.label || entity.type}</span>
+      `;
+      row.addEventListener('mouseenter', () => { row.style.background = 'var(--color-surface-2)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
+      row.addEventListener('click', () => openPanel(entity.id));
+      legend.appendChild(row);
+    }
+
+    if (neighbors.length > 12) {
+      const more = document.createElement('div');
+      more.style.cssText = 'font-size: var(--text-xs); color: var(--color-text-muted); padding: var(--space-2); text-align: center;';
+      more.textContent = `+ ${neighbors.length - 12} more connections`;
+      legend.appendChild(more);
+    }
+
+    container.appendChild(legend);
+
+  } catch (err) {
+    console.error('[entity-panel] Graph tab error:', err);
+    container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-4);">Failed to load graph.</div>';
   }
 }
 
