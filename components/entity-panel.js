@@ -1259,18 +1259,18 @@ async function _renderActivityTab(container) {
       let oldDisplay = entry.oldValue != null ? String(entry.oldValue) : null;
       let newDisplay = entry.newValue != null ? String(entry.newValue) : null;
 
-      // For link/unlink actions or relation fields, resolve entity IDs to names
-      if (entry.action === 'link' || entry.action === 'unlink' ||
-          (entry.field && ['assignedTo','project','blockedBy','person','recipe',
-           'members','addedBy'].includes(entry.field))) {
-        if (oldDisplay && oldDisplay.length > 10 && !oldDisplay.includes(' ')) {
-          const resolved = await getEntity(oldDisplay);
-          if (resolved) oldDisplay = resolved.name || resolved.title || oldDisplay;
-        }
-        if (newDisplay && newDisplay.length > 10 && !newDisplay.includes(' ')) {
-          const resolved = await getEntity(newDisplay);
-          if (resolved) newDisplay = resolved.name || resolved.title || newDisplay;
-        }
+      // Resolve old/new values — if they look like entity IDs, try to fetch display names
+      // An ID is any value: length > 8, no spaces, not a date/number/boolean
+      const _looksLikeId = (v) => v && v.length > 8 && !v.includes(' ') &&
+        !/^\d{4}-\d{2}-\d{2}/.test(v) && isNaN(Number(v));
+
+      if (_looksLikeId(oldDisplay)) {
+        const resolved = await getEntity(oldDisplay).catch(() => null);
+        if (resolved) oldDisplay = resolved.name || resolved.title || oldDisplay;
+      }
+      if (_looksLikeId(newDisplay)) {
+        const resolved = await getEntity(newDisplay).catch(() => null);
+        if (resolved) newDisplay = resolved.name || resolved.title || newDisplay;
       }
 
       let desc = `${icon} ${_capitalize(entry.action || 'updated')}`;

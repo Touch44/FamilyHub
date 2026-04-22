@@ -183,7 +183,11 @@ function _buildAndMount(config) {
 
   // ── Header ───────────────────────────────────────────── //
   const header = document.createElement('div');
-  header.className = 'modal-header';
+  header.className = 'modal-header ef-header';
+
+  // ── Header top row: type selector + close button ────── //
+  const headerTop = document.createElement('div');
+  headerTop.className = 'ef-header-top';
 
   // Type selector
   const typeSelect = document.createElement('select');
@@ -221,20 +225,26 @@ function _buildAndMount(config) {
     _updateHeader(header, newConfig, typeSelect);
   });
 
-  header.appendChild(typeSelect);
-
-  const title = document.createElement('h2');
-  title.className     = 'modal-title ef-modal-title';
-  title.style.cssText = 'font-size: var(--text-base); margin: 0;';
-  title.textContent   = _editEntity ? `Edit ${config.label}` : `New ${config.label}`;
-  header.appendChild(title);
+  headerTop.appendChild(typeSelect);
 
   const closeBtn = document.createElement('button');
   closeBtn.className   = 'btn-icon';
   closeBtn.textContent = '✕';
   closeBtn.setAttribute('aria-label', 'Close form');
   closeBtn.addEventListener('click', closeForm);
-  header.appendChild(closeBtn);
+  headerTop.appendChild(closeBtn);
+
+  header.appendChild(headerTop);
+
+  // ── Header title row ────────────────────────────────── //
+  const titleRow = document.createElement('div');
+  titleRow.className = 'ef-header-title-row';
+
+  const title = document.createElement('h2');
+  title.className   = 'ef-modal-title';
+  title.textContent = _editEntity ? `Edit ${config.label}` : `New ${config.label}`;
+  titleRow.appendChild(title);
+  header.appendChild(titleRow);
 
   // ── Body ─────────────────────────────────────────────── //
   const body = document.createElement('div');
