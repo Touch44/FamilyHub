@@ -1355,8 +1355,7 @@ function _makeDraggable(el, entityType, entityId) {
     // Custom ghost image: compact pill showing entity label
     const ghost = document.createElement('div');
     ghost.className = 'cal-drag-ghost';
-    ghost.textContent = el.textContent.trim().split('
-')[0].trim().slice(0, 40);
+    ghost.textContent = (el.textContent || '').trim().split('\n')[0].trim().slice(0, 40);
     document.body.appendChild(ghost);
     e.dataTransfer.setDragImage(ghost, 0, 0);
     // Remove ghost after drag starts (browser has already captured it)
