@@ -231,6 +231,7 @@ function _filterEvents(events, dateStr) {
 function _filterNotes(notes, dateStr) {
   return notes.filter(n =>
     n.type !== 'daily-note' &&
+    n.category !== 'Comment' &&   // Comments shown in their own section
     _isoToLocalDate(n.createdAt) === dateStr
   );
 }
@@ -1294,7 +1295,7 @@ function _injectStyles() {
       transition: background var(--transition-base);
     }
     .daily-meal-item:hover { background: var(--color-surface-2); }
-  `;
+
     /* ── Wall Posts ──────────────────────────────────────── */
     .daily-wall-list { display: flex; flex-direction: column; gap: var(--space-2); }
     .daily-wall-row {
