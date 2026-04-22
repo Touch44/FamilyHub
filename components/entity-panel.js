@@ -158,7 +158,6 @@ function _renderHeader() {
 
     _panelTitle.textContent = titleVal || 'Untitled';
     _panelTitle.title       = 'Click to edit title';
-    _panelTitle.style.cursor = 'pointer';
 
     // Remove old listener by cloning
     const newTitle = _panelTitle.cloneNode(true);
@@ -182,7 +181,7 @@ function _makeTitleEditable(titleField) {
   input.type        = 'text';
   input.value       = current;
   input.className   = 'input';
-  input.style.cssText = 'font-weight: var(--weight-semibold); font-size: var(--text-base); flex: 1; padding: var(--space-1) var(--space-2);';
+  input.style.cssText = 'font-family: var(--font-heading); font-weight: var(--weight-bold); font-size: var(--text-xl); flex: 1; padding: var(--space-1) var(--space-2);';
 
   _panelTitle.replaceWith(input);
   input.focus();
@@ -194,12 +193,11 @@ function _makeTitleEditable(titleField) {
       _entity[titleField.key] = val;
       await _save();
     }
-    // Rebuild title span
+    // Rebuild title span — CSS handles styling via #entity-panel-title
     const span = document.createElement('span');
-    span.id               = 'entity-panel-title';
-    span.textContent      = val || 'Untitled';
-    span.title            = 'Click to edit title';
-    span.style.cssText    = 'font-weight: var(--weight-semibold); flex: 1; font-size: var(--text-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;';
+    span.id          = 'entity-panel-title';
+    span.textContent = val || 'Untitled';
+    span.title       = 'Click to edit title';
     input.replaceWith(span);
     _panelTitle = span;
     span.addEventListener('click', () => _makeTitleEditable(titleField));
@@ -1204,8 +1202,22 @@ async function _renderActivityTab(container) {
   container.innerHTML = '<div style="font-size: var(--text-xs); color: var(--color-text-muted); padding: var(--space-2);">Loading activity…</div>';
 
   try {
-    const rec = await getSetting('auditLog');
+    const [rec, authData] = await Promise.all([
+      getSetting('auditLog'),
+      getSetting('auth'),
+    ]);
     const log = Array.isArray(rec) ? rec : [];
+
+    // Build accountId → display name map via memberId → person entity
+    const accountMap = new Map();
+    for (const acct of (authData?.accounts || [])) {
+      if (acct.memberId) {
+        const person = await getEntity(acct.memberId);
+        accountMap.set(acct.id, person?.name || person?.title || acct.username || acct.id);
+      } else {
+        accountMap.set(acct.id, acct.username || acct.id);
+      }
+    }
 
     // Filter to this entity, newest first
     const entries = log
@@ -1232,27 +1244,62 @@ async function _renderActivityTab(container) {
     for (const entry of entries) {
       const item = document.createElement('div');
       item.style.cssText = `
-        display: flex; gap: var(--space-2); padding: var(--space-2);
+        display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2);
         border-bottom: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
         font-size: var(--text-xs);
       `;
 
-      const icon = entry.action === 'create' ? '✨' : entry.action === 'delete' ? '🗑️' : '✏️';
+      const icon = entry.action === 'create' ? '✨'
+                 : entry.action === 'delete' ? '🗑️'
+                 : entry.action === 'link'   ? '🔗'
+                 : entry.action === 'unlink' ? '🔓'
+                 : '✏️';
+
+      // Resolve old/new values — if they look like entity IDs, try to fetch display names
+      let oldDisplay = entry.oldValue != null ? String(entry.oldValue) : null;
+      let newDisplay = entry.newValue != null ? String(entry.newValue) : null;
+
+      // For link/unlink actions or relation fields, resolve entity IDs to names
+      if (entry.action === 'link' || entry.action === 'unlink' ||
+          (entry.field && ['assignedTo','project','blockedBy','person','recipe',
+           'members','addedBy'].includes(entry.field))) {
+        if (oldDisplay && oldDisplay.length > 10 && !oldDisplay.includes(' ')) {
+          const resolved = await getEntity(oldDisplay);
+          if (resolved) oldDisplay = resolved.name || resolved.title || oldDisplay;
+        }
+        if (newDisplay && newDisplay.length > 10 && !newDisplay.includes(' ')) {
+          const resolved = await getEntity(newDisplay);
+          if (resolved) newDisplay = resolved.name || resolved.title || newDisplay;
+        }
+      }
 
       let desc = `${icon} ${_capitalize(entry.action || 'updated')}`;
       if (entry.field) {
         desc += ` — ${entry.field}`;
-        if (entry.oldValue != null || entry.newValue != null) {
-          const old = entry.oldValue != null ? `"${_truncate(String(entry.oldValue), 20)}"` : 'empty';
-          const nw  = entry.newValue != null ? `"${_truncate(String(entry.newValue), 20)}"` : 'empty';
+        if (oldDisplay != null || newDisplay != null) {
+          const old = oldDisplay != null ? `"${_truncate(oldDisplay, 25)}"` : 'empty';
+          const nw  = newDisplay != null ? `"${_truncate(newDisplay, 25)}"` : 'empty';
           desc += `: ${old} → ${nw}`;
         }
       }
 
-      item.innerHTML = `
+      // Resolve byAccountId to display name
+      const byName = entry.byAccountId ? accountMap.get(entry.byAccountId) : null;
+
+      const topRow = document.createElement('div');
+      topRow.style.cssText = 'display: flex; gap: var(--space-2); align-items: flex-start;';
+      topRow.innerHTML = `
         <div style="flex: 1; color: var(--color-text);">${desc}</div>
-        <div style="flex-shrink: 0; color: var(--color-text-muted);">${_formatDateShort(entry.at)}</div>
+        <div style="flex-shrink: 0; color: var(--color-text-muted); white-space: nowrap;">${_formatDateShort(entry.at)}</div>
       `;
+      item.appendChild(topRow);
+
+      if (byName) {
+        const byRow = document.createElement('div');
+        byRow.style.cssText = 'color: var(--color-text-muted); font-size: var(--text-xs); padding-left: var(--space-1);';
+        byRow.textContent = `by ${byName}`;
+        item.appendChild(byRow);
+      }
 
       list.appendChild(item);
     }
