@@ -448,6 +448,33 @@ function _buildFieldControl(field, config) {
       return input;
     }
 
+    // ── TIME ─────────────────────────────────────────────── //
+    case 'time': {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+      const input = document.createElement('input');
+      input.type      = 'time';
+      input.id        = `ef-field-${field.key}`;
+      input.className = 'input';
+      input.step      = '600'; // 10-minute increments
+      // Default to 06:00 if no value set
+      input.value     = existing || '06:00';
+      if (field.placeholder) input.placeholder = field.placeholder;
+      input.addEventListener('change', () => {
+        _draft[field.key] = input.value || '06:00';
+      });
+      // Init draft
+      if (!existing) _draft[field.key] = '06:00';
+
+      const hint = document.createElement('span');
+      hint.style.cssText = 'font-size:var(--text-xs);color:var(--color-text-muted);white-space:nowrap;';
+      hint.textContent = field.helpText || '10-min steps';
+
+      wrap.append(input, hint);
+      return wrap;
+    }
+
     // ── DATETIME ─────────────────────────────────────────── //
     case 'datetime': {
       const input = document.createElement('input');

@@ -877,26 +877,7 @@ function _buildWeekView(container, dateMap) {
     const allDayCell = document.createElement('div');
     allDayCell.className = 'cal-week-allday-cell';
 
-    // Tasks (no time) shown as chips
-    const tasksForDay = items.filter(it => it.entityType === 'task');
-    for (const t of tasksForDay.slice(0, 3)) {
-      const chip = document.createElement('button');
-      chip.className = 'cal-week-chip task-chip';
-      chip.textContent = t.entity.title || 'Task';
-      chip.title = t.entity.title || 'Task';
-      _makeDraggable(chip, 'task', t.entity.id);
-      chip.addEventListener('click', (e) => {
-        e.stopPropagation();
-        emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: t.entity.id });
-      });
-      allDayCell.appendChild(chip);
-    }
-    if (tasksForDay.length > 3) {
-      const more = document.createElement('span');
-      more.className = 'cal-week-more';
-      more.textContent = `+${tasksForDay.length - 3}`;
-      allDayCell.appendChild(more);
-    }
+    // Tasks have hasTime:true and show in the time grid — skip them in all-day row
 
     // DateEntities shown as chips
     const datesForDay = items.filter(it => it.entityType === 'dateEntity');
@@ -966,6 +947,9 @@ function _buildWeekView(container, dateMap) {
       const startDs = _isoToLocalDate(it.entity.date);
       const endDs = _isoToLocalDate(it.entity.endDate);
       if (!startDs || !endDs || startDs === endDs) continue;
+
+      // Timed multi-day events render as vertical blocks in the time grid — skip all-day bar
+      if (_isoToLocalHourFrac(it.entity.date) !== null) continue;
 
       // Clamp to visible week
       const visStart = startDs < weekStartStr ? 0 : d;
@@ -1341,6 +1325,26 @@ function _buildAgendaView(container, dateMap) {
  * Make an element draggable carrying entity + type payload.
  * Used on: month popover items, week event blocks, week all-day chips, agenda items.
  */
+// ── Drag time tooltip ────────────────────────────────────── //
+
+let _dragTooltip = null;
+
+function _showDragTooltip(text, x, y) {
+  if (!_dragTooltip) {
+    _dragTooltip = document.createElement('div');
+    _dragTooltip.className = 'cal-drag-tooltip';
+    document.body.appendChild(_dragTooltip);
+  }
+  _dragTooltip.textContent = text;
+  _dragTooltip.style.left = `${x + 14}px`;
+  _dragTooltip.style.top  = `${y - 10}px`;
+  _dragTooltip.style.display = 'block';
+}
+
+function _hideDragTooltip() {
+  if (_dragTooltip) _dragTooltip.style.display = 'none';
+}
+
 function _makeDraggable(el, entityType, entityId) {
   el.setAttribute('draggable', 'true');
   el.addEventListener('dragstart', (e) => {
@@ -1353,6 +1357,7 @@ function _makeDraggable(el, entityType, entityId) {
   el.addEventListener('dragend', () => {
     el.classList.remove('cal-dragging');
     _dragPayload = null;
+    _hideDragTooltip();
     // Remove all drop highlights
     document.querySelectorAll('.cal-drop-target').forEach(t => t.classList.remove('cal-drop-target'));
   });
@@ -1371,9 +1376,25 @@ function _makeDropTarget(el, newDateStr, baseHour) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     el.classList.add('cal-drop-target');
+
+    // Show snapped time tooltip during drag
+    if (baseHour != null) {
+      const rect   = el.getBoundingClientRect();
+      const relY   = Math.max(0, Math.min(e.clientY - rect.top, rect.height - 1));
+      const rawMin = (relY / rect.height) * 60;
+      let   snapMin  = Math.round(rawMin / SNAP_MINUTES) * SNAP_MINUTES;
+      let   snapHour = baseHour;
+      if (snapMin >= 60) { snapHour++; snapMin = 0; }
+      const ampm   = snapHour >= 12 ? 'PM' : 'AM';
+      const h12    = snapHour === 0 ? 12 : snapHour > 12 ? snapHour - 12 : snapHour;
+      const label  = `${h12}:${String(snapMin).padStart(2,'0')} ${ampm}`;
+      _showDragTooltip(label, e.clientX, e.clientY);
+    }
   });
-  el.addEventListener('dragleave', () => {
+  el.addEventListener('dragleave', (e) => {
     el.classList.remove('cal-drop-target');
+    // Only hide tooltip if truly leaving this cell (not entering a child)
+    if (!el.contains(e.relatedTarget)) _hideDragTooltip();
   });
   el.addEventListener('drop', async (e) => {
     e.preventDefault();
@@ -2043,6 +2064,23 @@ function _injectStyles() {
     }
 
     /* ── Drag-and-drop ─────────────────────────────────── */
+    /* Drag time tooltip */
+    .cal-drag-tooltip {
+      position: fixed;
+      z-index: 99999;
+      background: var(--color-text);
+      color: var(--color-bg);
+      font-size: 11px;
+      font-weight: var(--weight-semibold);
+      font-family: var(--font-body);
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+      pointer-events: none;
+      display: none;
+      white-space: nowrap;
+      box-shadow: var(--shadow-sm);
+    }
+
     .cal-dragging {
       opacity: 0.5;
       cursor: grabbing;

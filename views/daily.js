@@ -695,18 +695,35 @@ async function _renderActivityLog(container, dateStr, auditLog, accountMap) {
   const list = document.createElement('div');
   list.className = 'daily-activity-list';
 
+  // Helper: get entity name from an entity object (handles posts with .body)
+  function _entityName(e) {
+    if (!e) return null;
+    return e.title || e.name || e.label
+      || (e.body ? (typeof e.body === 'string' ? e.body.replace(/<[^>]*>/g,'').trim().slice(0,60) : null) : null)
+      || null;
+  }
+
   // Resolve entity names and existence for all entries in parallel
   const resolved = await Promise.all(filtered.map(async entry => {
-    if (!entry.entityId) return { entry, entity: null, exists: false, name: '—' };
+    if (!entry.entityId) {
+      return { entry, entity: null, exists: false, name: entry.entityTitle || '—' };
+    }
     try {
       const e = await getEntity(entry.entityId);
-      const exists = !!(e && !e.deleted);
-      const name = exists
-        ? (e.title || e.name || e.label || entry.entityTitle || entry.entityId)
-        : (entry.entityTitle || entry.entityId || '—');
-      return { entry, entity: e, exists, name };
+      if (e) {
+        // Entity exists and is not deleted
+        const name = _entityName(e) || entry.entityTitle || entry.entityId;
+        return { entry, entity: e, exists: true, name };
+      } else {
+        // getEntity returns null for deleted OR not-found
+        // Fall back to stored entityTitle (set at write time)
+        const storedName = entry.entityTitle
+          ? (entry.entityTitle.match(/^[0-9a-f-]{36}$/) ? null : entry.entityTitle)
+          : null;
+        return { entry, entity: null, exists: false, name: storedName || 'Deleted item' };
+      }
     } catch {
-      return { entry, entity: null, exists: false, name: entry.entityTitle || entry.entityId || '—' };
+      return { entry, entity: null, exists: false, name: entry.entityTitle || 'Unknown' };
     }
   }));
 

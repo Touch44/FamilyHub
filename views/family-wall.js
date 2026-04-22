@@ -294,14 +294,13 @@ function _mkFileLabel(labelText, accept, onFile) {
 /**
  * Read a file for upload with instant visual feedback.
  *
- * Strategy (fastest possible UX):
- *   Phase 1 (0ms)   — createObjectURL gives an instant preview src.
- *   Phase 2 (async) — ArrayBuffer → manual chunked base64 via requestIdleCallback.
- *                     Chunks of 192KB keep the main thread free and update the
- *                     progress bar smoothly. No full-file blocking call.
- *
- * Caller receives { blobUrl, dataUrl:null } immediately for preview,
- * then { blobUrl:null, dataUrl } once encoding finishes.
+ * Strategy:
+ *   Phase 1 (0ms)   — createObjectURL gives instant preview src (no encoding).
+ *   Phase 2 (async) — True streaming: File.slice() reads one 96KB chunk at a time.
+ *                     Each chunk is read, encoded to base64, then discarded before
+ *                     the next chunk is fetched. This keeps peak memory low and
+ *                     never blocks the main thread with a full-file read.
+ *                     A cancel token lets in-flight reads be abandoned cleanly.
  */
 function _readFileWithProgress(file, sp, onDone) {
   // Phase 1: instant preview
@@ -311,49 +310,57 @@ function _readFileWithProgress(file, sp, onDone) {
   const txt = sp.querySelector('.fw-prog-txt');
   onDone({ blobUrl, dataUrl: null, file });
 
-  // Phase 2: read as ArrayBuffer then chunk-encode to base64
-  const reader = new FileReader();
-  reader.onerror = () => { sp.textContent = '❌ Failed to read'; };
+  // Phase 2: stream-read the file in 96 KB slices
+  const SLICE = 98304;   // 96 KB — must be divisible by 3 for clean base64 boundaries
+  const total  = file.size;
+  let   offset = 0;
+  let   b64    = '';
+  let   cancelled = false;
 
-  reader.onload = (ev) => {
-    const ab      = ev.target.result;
-    const bytes   = new Uint8Array(ab);
-    const CHUNK   = 196608; // 192 KB — safe chunk for btoa
-    const total   = bytes.length;
-    let   offset  = 0;
-    let   b64     = '';
+  // Attach cancel token to the label so the caller can abort
+  sp._cancelUpload = () => { cancelled = true; URL.revokeObjectURL(blobUrl); };
 
-    function encodeChunk() {
-      const end   = Math.min(offset + CHUNK, total);
-      const slice = bytes.subarray(offset, end);
-      // btoa requires a binary string
-      let bin = '';
-      for (let i = 0; i < slice.length; i++) bin += String.fromCharCode(slice[i]);
+  function readNextSlice() {
+    if (cancelled) return;
+    if (offset >= total) {
+      // All slices done
+      URL.revokeObjectURL(blobUrl);
+      if (bar) bar.style.width = '100%';
+      if (txt) txt.textContent = '✅ ' + file.name;
+      const mimeType = file.type || 'application/octet-stream';
+      onDone({ blobUrl: null, dataUrl: `data:${mimeType};base64,${b64}`, file });
+      return;
+    }
+
+    const slice  = file.slice(offset, Math.min(offset + SLICE, total));
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      if (!cancelled) sp.textContent = '❌ Failed to read';
+    };
+
+    reader.onload = (ev) => {
+      if (cancelled) return;
+      const ab    = ev.target.result;
+      const bytes = new Uint8Array(ab);
+      let   bin   = '';
+      // Build binary string for btoa
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
       b64    += btoa(bin);
-      offset  = end;
+      offset += bytes.length;
 
       const pct = Math.round((offset / total) * 100);
       if (bar) bar.style.width = pct + '%';
       if (txt) txt.textContent = pct + '%';
 
-      if (offset < total) {
-        // Yield to browser between chunks so UI stays responsive
-        requestIdleCallback ? requestIdleCallback(encodeChunk, { timeout: 50 })
-                            : setTimeout(encodeChunk, 0);
-      } else {
-        // Done — assemble data URL
-        URL.revokeObjectURL(blobUrl);
-        if (bar) bar.style.width = '100%';
-        if (txt) txt.textContent = '✅ ' + file.name;
-        const dataUrl = `data:${file.type || 'application/octet-stream'};base64,${b64}`;
-        onDone({ blobUrl: null, dataUrl, file });
-      }
-    }
+      // Yield to browser, then read next slice
+      setTimeout(readNextSlice, 0);
+    };
 
-    encodeChunk();
-  };
+    reader.readAsArrayBuffer(slice);
+  }
 
-  reader.readAsArrayBuffer(file);
+  readNextSlice();
 }
 
 // ── Filter bar ───────────────────────────────────────────────
@@ -1096,10 +1103,20 @@ function _injectStyles() {
 
 // ── Main render ───────────────────────────────────────────────
 
+/** Render guard — prevents concurrent renderWall calls from doubling content */
+let _wallRendering = false;
+
 async function renderWall(params={}) {
   const el=document.getElementById('view-family-wall');
   if (!el) return;
   _injectStyles();
+
+  // Cancel any pending debounce — we're about to render fresh
+  if (_wallTimer) { clearTimeout(_wallTimer); _wallTimer=null; }
+
+  // Guard: if already rendering, skip (debounce will re-trigger after)
+  if (_wallRendering) return;
+  _wallRendering = true;
 
   if (!params?._internal) {
     _filterMemberId=null; _filterPostType='All'; _filterPinnedOnly=false;
@@ -1145,6 +1162,8 @@ async function renderWall(params={}) {
   } catch(e) {
     console.error('[fw] render failed',e);
     el.innerHTML='<div style="padding:var(--space-8);color:var(--color-danger-text);text-align:center;">Failed to load. Please refresh.</div>';
+  } finally {
+    _wallRendering = false;
   }
 }
 
