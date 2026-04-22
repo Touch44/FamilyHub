@@ -315,6 +315,49 @@ function _buildFieldGroup(field, config) {
   group.dataset.field = field.key;
   group.style.marginBottom = 'var(--space-4)';
 
+  // ── endDate: initially hidden with toggle ──
+  const isEndDate = field.key === 'endDate';
+  const hasExisting = isEndDate && _draft[field.key];
+
+  if (isEndDate && !hasExisting) {
+    // Show as a toggle link instead of the full field
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn-ghost btn-xs';
+    toggle.style.cssText = 'color: var(--color-text-accent); padding: var(--space-1) 0;';
+    toggle.textContent = '+ Add end date/time';
+    toggle.addEventListener('click', () => {
+      toggle.style.display = 'none';
+      group.style.display = '';
+    });
+    // Insert toggle before group, hide the group
+    const wrapper = document.createElement('div');
+    wrapper.dataset.field = field.key;
+    wrapper.appendChild(toggle);
+
+    // Still build the group but hide it
+    group.style.display = 'none';
+
+    // Label
+    const label = document.createElement('label');
+    label.className   = 'form-label';
+    label.htmlFor     = `ef-field-${field.key}`;
+    label.textContent = field.label;
+    group.appendChild(label);
+
+    const control = _buildFieldControl(field, config);
+    if (control) group.appendChild(control);
+
+    const err = document.createElement('span');
+    err.className       = 'form-error ef-field-error';
+    err.style.display   = 'none';
+    err.setAttribute('role', 'alert');
+    group.appendChild(err);
+
+    wrapper.appendChild(group);
+    return wrapper;
+  }
+
   // Label — skip for isTitle (title gets special styling)
   if (!field.isTitle) {
     const label = document.createElement('label');

@@ -681,7 +681,8 @@ function _createFieldRow(field) {
  */
 function _renderFieldValue(wrap, field) {
   wrap.innerHTML = '';
-  const value = _entity[field.key];
+  // GUARD: For field named 'type', read from _subtype to avoid collision
+  const value = field.key === 'type' ? (_entity._subtype ?? _entity[field.key]) : _entity[field.key];
 
   switch (field.type) {
 
@@ -900,7 +901,8 @@ function _editText(wrap, field, inputType = 'text') {
 }
 
 function _editSelect(wrap, field) {
-  const current = _entity[field.key] ?? '';
+  // GUARD: For field named 'type', use _subtype
+  const current = field.key === 'type' ? (_entity._subtype ?? '') : (_entity[field.key] ?? '');
   wrap.innerHTML = '';
 
   const select = document.createElement('select');
@@ -927,7 +929,11 @@ function _editSelect(wrap, field) {
   const commit = async () => {
     const val = select.value;
     if (val !== current) {
-      _entity[field.key] = val || null;
+      if (field.key === 'type') {
+        _entity._subtype = val || null;
+      } else {
+        _entity[field.key] = val || null;
+      }
       await _save();
     }
     _renderFieldValue(wrap, field);
@@ -1641,6 +1647,13 @@ async function _save() {
   if (_savingIndicator) _savingIndicator.classList.remove('hidden');
 
   try {
+    // GUARD: If the entity has a field named 'type' that overwrote the structural
+    // entity type (e.g. appointment subtype "Medical" replaced "appointment"),
+    // restore the correct structural type from _config.
+    if (_config && _entity.type !== _config.key) {
+      _entity._subtype = _entity.type;
+      _entity.type = _config.key;
+    }
     _entity = await saveEntity(_entity);
   } catch (err) {
     console.error('[entity-panel] Save failed:', err);

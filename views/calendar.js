@@ -898,6 +898,27 @@ function _buildWeekView(container, dateMap) {
       allDayCell.appendChild(chip);
     }
 
+    // Multi-day events shown as all-day chips (not timed blocks)
+    const multiDayEvents = items.filter(it => {
+      if (it.entityType !== 'event' || !it.entity.endDate) return false;
+      const startDs = _isoToLocalDate(it.entity.date);
+      const endDs = _isoToLocalDate(it.entity.endDate);
+      return startDs && endDs && startDs !== endDs;
+    });
+    for (const mde of multiDayEvents.slice(0, 2)) {
+      const chip = document.createElement('button');
+      chip.className = 'cal-week-chip';
+      chip.style.cssText = 'background: var(--color-info-bg); color: var(--color-info-text); border-left: 2px solid var(--color-info);';
+      chip.textContent = mde.entity.title || 'Event';
+      chip.title = mde.entity.title || 'Event';
+      _makeDraggable(chip, 'event', mde.entity.id);
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        emit(EVENTS.PANEL_OPENED, { entityType: 'event', entityId: mde.entity.id });
+      });
+      allDayCell.appendChild(chip);
+    }
+
     // Drop target for all-day row
     _makeDropTarget(allDayCell, ds);
 
@@ -996,9 +1017,16 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
     const items = dateMap.get(ds) || [];
 
     // Filter to timed events/appointments within visible range
+    // EXCLUDE multi-day events (shown as all-day chips instead)
     const timedItems = items.filter(it => {
       const reg = ENTITY_REGISTRY[it.entityType];
       if (!reg || !reg.hasTime) return false;
+      // Skip multi-day events
+      if (it.entityType === 'event' && it.entity.endDate) {
+        const startDs = _isoToLocalDate(it.entity.date);
+        const endDs = _isoToLocalDate(it.entity.endDate);
+        if (startDs && endDs && startDs !== endDs) return false;
+      }
       const h = _isoToLocalHourFrac(it.entity.date);
       return h !== null && h >= HOUR_START && h < HOUR_END;
     });
