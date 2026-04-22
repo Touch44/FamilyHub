@@ -10,7 +10,7 @@
  *   initEntityForm()                           — wire FAB events (call once on boot)
  */
 
-import { saveEntity, saveEdge, getEntitiesByType, uid } from '../core/db.js';
+import { saveEntity, saveEdge, getEntitiesByType } from '../core/db.js';
 import { getEntityTypeConfig, getAllEntityTypes }        from '../core/graph-engine.js';
 import { emit, EVENTS }                                from '../core/events.js';
 

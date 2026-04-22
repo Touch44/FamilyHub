@@ -9,7 +9,7 @@
  *   collapseFab()  — close radial menu
  */
 
-import { emit, on, EVENTS }   from '../core/events.js';
+import { on, EVENTS }         from '../core/events.js';
 import { getCurrentView }      from '../core/router.js';
 import { openForm }            from './entity-form.js';
 

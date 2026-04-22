@@ -41,6 +41,7 @@ const SHELL_FILES = [
   './components/search.js',
   // View modules
   './views/daily.js',
+  './views/kanban.js',
   // Icons (all sizes + maskable variants for PWA installability)
   './icons/icon-192.png',
   './icons/icon-192-maskable.png',

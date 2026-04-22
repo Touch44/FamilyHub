@@ -25,7 +25,7 @@ import { registerView }                    from '../core/router.js';
 import { getEntitiesByType, getSetting,
          saveEntity, uid }                 from '../core/db.js';
 import { emit, EVENTS }                    from '../core/events.js';
-import { getAccount, getAllAccounts }       from '../core/auth.js';
+import { getAccount }                      from '../core/auth.js';
 
 // ── Constants ─────────────────────────────────────────────── //
 
@@ -149,7 +149,7 @@ function _setSectionOpen(key, open) {
  */
 async function _loadData(dateStr) {
   const [tasks, events, notes, appointments, dateEntities, mealPlans, auditLog,
-         persons, projects, accounts] =
+         persons, projects, authData] =
     await Promise.all([
       getEntitiesByType('task'),
       getEntitiesByType('event'),
@@ -160,17 +160,21 @@ async function _loadData(dateStr) {
       getSetting('auditLog'),
       getEntitiesByType('person'),
       getEntitiesByType('project'),
-      getAllAccounts().catch(() => []),
+      getSetting('auth'),
     ]);
 
   // Build lookup maps for relation resolution
   const personMap  = new Map(persons.map(p  => [p.id, p.name  || p.title || p.id]));
   const projectMap = new Map(projects.map(pr => [pr.id, pr.name || pr.title || pr.id]));
-  // accountMap: accountId → display name (username fallback)
-  const accountMap = new Map((accounts || []).map(a => [
-    a.id,
-    a.displayName || a.username || a.id,
-  ]));
+
+  // accountMap: accountId → display name
+  // Each account has memberId → linked person entity → person.name
+  const accountMap = new Map();
+  const accounts = authData?.accounts || [];
+  for (const acct of accounts) {
+    const personName = acct.memberId ? personMap.get(acct.memberId) : null;
+    accountMap.set(acct.id, personName || acct.username || acct.id);
+  }
 
   return { tasks, events, notes, appointments, dateEntities, mealPlans,
            auditLog: auditLog || [], personMap, projectMap, accountMap };

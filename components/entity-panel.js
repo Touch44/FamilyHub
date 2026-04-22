@@ -10,8 +10,8 @@
  */
 
 import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
-         saveEdge, deleteEdge, getSetting, uid } from '../core/db.js';
-import { getEntityTypeConfig, getAllEntityTypes, getBacklinks,
+         saveEdge, deleteEdge, getSetting } from '../core/db.js';
+import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
 
@@ -1423,6 +1423,24 @@ async function _renderGraphTab(container) {
   }
 }
 
+
+// ════════════════════════════════════════════════════════════
+// DELETE CONFIRMATION
+// ════════════════════════════════════════════════════════════
+
+async function _confirmDelete() {
+  if (!_entity) return;
+
+  const confirmed = confirm(`Delete this ${_config?.label || 'entity'}? This action cannot be undone.`);
+  if (!confirmed) return;
+
+  try {
+    await deleteEntity(_entity.id);
+    closePanel();
+  } catch (err) {
+    console.error('[entity-panel] Delete failed:', err);
+  }
+}
 
 // ════════════════════════════════════════════════════════════
 // SAVE
