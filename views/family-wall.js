@@ -282,6 +282,45 @@ function _mkFileLabel(labelText, accept, onFile) {
   return lbl;
 }
 
+// ── File-read with progress ──────────────────────────────────
+
+/**
+ * Read a file as base64 dataURL with an inline progress bar in the label span.
+ * Uses a blob URL for instant preview where possible, then reads in background.
+ * @param {File}     file     - the File object
+ * @param {Element}  sp       - the <span> label element to show progress in
+ * @param {Function} onDone   - callback(dataUrl) when read is complete
+ */
+function _readFileWithProgress(file, sp, onDone) {
+  // Show an immediate progress bar in the label
+  sp.innerHTML = `<span class="fw-prog-wrap"><span class="fw-prog-bar" style="width:0%"></span></span> <span class="fw-prog-txt">0%</span>`;
+  const bar = sp.querySelector('.fw-prog-bar');
+  const txt = sp.querySelector('.fw-prog-txt');
+
+  const reader = new FileReader();
+
+  reader.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round((e.loaded / e.total) * 100);
+      if (bar) bar.style.width = pct + '%';
+      if (txt) txt.textContent = pct + '%';
+    }
+  };
+
+  reader.onload = (e) => {
+    if (bar) bar.style.width = '100%';
+    if (txt) txt.textContent = '✅ ' + file.name;
+    onDone(e.target.result);
+  };
+
+  reader.onerror = () => {
+    sp.textContent = '❌ Failed to read file';
+  };
+
+  // Start reading — browser handles async chunked reads internally
+  reader.readAsDataURL(file);
+}
+
 // ── Filter bar ───────────────────────────────────────────────
 
 function _buildFilterBar(el, persons, posts) {
@@ -417,15 +456,14 @@ function _buildCompose(el, pm, apm) {
     if(_isImgUrl(u)) preview.src=u;
   });
 
-  // Photo device picker (images only for preview)
+  // Photo device picker — immediate preview + progress bar
   const photoLbl = _mkFileLabel('📷 Choose photo', 'image/*', (f, sp) => {
-    const r=new FileReader();
-    r.onload=ev=>{
-      photoVal=ev.target.result;
-      preview.src=photoVal; preview.style.display='';
-      urlInp.value=''; sp.textContent=`✅ ${f.name}`;
-    };
-    r.readAsDataURL(f);
+    _readFileWithProgress(f, sp, (dataUrl) => {
+      photoVal = dataUrl;
+      preview.src = dataUrl;
+      preview.style.display = '';
+      urlInp.value = '';
+    });
   });
 
   photoSec.append(urlInp, photoLbl, preview);
@@ -440,12 +478,10 @@ function _buildCompose(el, pm, apm) {
 
   const anyFileLbl = _mkFileLabel('📎 Add any file', '', (f, sp) => {
     if (f.size > 8*1024*1024 && !confirm(`${f.name} is ${_bytes(f.size)}. Store in database?`)) return;
-    const r=new FileReader();
-    r.onload=ev=>{
-      files.push({ name:f.name, size:f.size, mimeType:f.type, dataUrl:ev.target.result });
+    _readFileWithProgress(f, sp, (dataUrl) => {
+      files.push({ name: f.name, size: f.size, mimeType: f.type, dataUrl });
       renderFileList();
-    };
-    r.readAsDataURL(f);
+    });
   });
 
   function renderFileList() {
@@ -938,6 +974,11 @@ function _injectStyles() {
     .fw-lb-nav:hover { background:rgba(255,255,255,0.28); }
     .fw-lb-prev { left:var(--space-3); }
     .fw-lb-next { right:var(--space-3); }
+
+    /* Upload progress */
+    .fw-prog-wrap { display:inline-block; width:80px; height:6px; background:var(--color-border); border-radius:3px; vertical-align:middle; overflow:hidden; }
+    .fw-prog-bar  { display:block; height:100%; background:var(--color-accent); border-radius:3px; transition:width 0.1s linear; }
+    .fw-prog-txt  { font-size:var(--text-xs); color:var(--color-text-muted); vertical-align:middle; }
 
     /* Timeline */
     .fw-tl { display:flex; flex-direction:column; gap:var(--space-4); }

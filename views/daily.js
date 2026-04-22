@@ -41,6 +41,8 @@ const SECTION_DEFAULTS = {
   'tasks':        true,
   'events':       false,
   'notes':        false,
+  'wall-posts':   false,
+  'comments':     false,
   'activity':     false,
   'reminders':    false,
   'birthdays':    false,
@@ -148,12 +150,13 @@ function _setSectionOpen(key, open) {
  * REVIEW 1: all getEntitiesByType calls use the correct type keys from graph-engine.js
  */
 async function _loadData(dateStr) {
-  const [tasks, events, notes, appointments, dateEntities, mealPlans, auditLog,
+  const [tasks, events, notes, posts, appointments, dateEntities, mealPlans, auditLog,
          persons, projects, authData] =
     await Promise.all([
       getEntitiesByType('task'),
       getEntitiesByType('event'),
       getEntitiesByType('note'),
+      getEntitiesByType('post'),
       getEntitiesByType('appointment'),
       getEntitiesByType('dateEntity'),
       getEntitiesByType('mealPlan'),
@@ -176,7 +179,7 @@ async function _loadData(dateStr) {
     accountMap.set(acct.id, personName || acct.username || acct.id);
   }
 
-  return { tasks, events, notes, appointments, dateEntities, mealPlans,
+  return { tasks, events, notes, posts, appointments, dateEntities, mealPlans,
            auditLog: auditLog || [], personMap, projectMap, accountMap };
 }
 
@@ -228,6 +231,24 @@ function _filterEvents(events, dateStr) {
 function _filterNotes(notes, dateStr) {
   return notes.filter(n =>
     n.type !== 'daily-note' &&
+    _isoToLocalDate(n.createdAt) === dateStr
+  );
+}
+
+/**
+ * Filter wall posts created on the given dateStr.
+ */
+function _filterWallPosts(posts, dateStr) {
+  return posts.filter(p => _isoToLocalDate(p.createdAt) === dateStr);
+}
+
+/**
+ * Filter note entities that are comments (category='Comment') created today.
+ * These are comments left on wall posts via the comments-on edge.
+ */
+function _filterComments(notes, dateStr) {
+  return notes.filter(n =>
+    n.category === 'Comment' &&
     _isoToLocalDate(n.createdAt) === dateStr
   );
 }
@@ -817,6 +838,99 @@ function _renderMeals(container, dateStr, mealPlans) {
   body.appendChild(grid);
 }
 
+/**
+ * Section 9: Wall Posts — post entities created today.
+ * Shows author, post type, body snippet and optional photo thumbnail.
+ */
+function _renderWallPosts(container, dateStr, posts, personMap, accountMap) {
+  const filtered = _filterWallPosts(posts, dateStr)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const { wrapper, body } = _buildSection('wall-posts', '🖼️', 'Wall Posts', filtered.length);
+  container.appendChild(wrapper);
+
+  if (!filtered.length) {
+    _renderEmpty(body, 'No wall posts on this day.');
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'daily-wall-list';
+
+  for (const post of filtered) {
+    const authorId = post._authorPersonId || post.createdBy;
+    const authorName = authorId ? (personMap.get(authorId) || accountMap.get(authorId) || 'Unknown') : 'Unknown';
+    const postType = post.postType || 'Text';
+    const typeIcons = { Text: '💬', Photo: '📷', File: '📎', Link: '🔗', Milestone: '🏆' };
+    const icon = typeIcons[postType] || '💬';
+    const snippet = (post.body || '').slice(0, 80) + ((post.body || '').length > 80 ? '…' : '');
+
+    const row = document.createElement('div');
+    row.className = 'daily-wall-row';
+    row.innerHTML = `
+      <span class="daily-wall-type-icon" title="${_esc(postType)}">${icon}</span>
+      <div class="daily-wall-info">
+        <span class="daily-wall-author">${_esc(authorName)}</span>
+        ${snippet ? `<span class="daily-wall-snippet">${_esc(snippet)}</span>` : ''}
+        <div class="daily-wall-meta">
+          <span class="chip">${_esc(postType)}</span>
+          ${post.pinned ? '<span class="badge badge-today">📌 Pinned</span>' : ''}
+          ${(post.tags || []).map(t => `<span class="chip">#${_esc(t)}</span>`).join('')}
+        </div>
+      </div>
+      ${post.photoUrl && post.postType === 'Photo'
+        ? `<img class="daily-wall-thumb" src="${_esc(post.photoUrl)}" alt="" loading="lazy" />`
+        : ''}
+    `;
+    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'post', entityId: post.id }));
+    list.appendChild(row);
+  }
+
+  body.appendChild(list);
+}
+
+/**
+ * Section 10: Comments — comment entities (category='Comment') created today.
+ * Shows commenter name, the comment body, and which post it was left on.
+ */
+function _renderComments(container, dateStr, notes, personMap, accountMap) {
+  const filtered = _filterComments(notes, dateStr)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const { wrapper, body } = _buildSection('comments', '💬', 'Comments', filtered.length);
+  container.appendChild(wrapper);
+
+  if (!filtered.length) {
+    _renderEmpty(body, 'No comments on this day.');
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'daily-comment-list';
+
+  for (const comment of filtered) {
+    const authorId = comment._authorPersonId || comment.createdBy;
+    const authorName = authorId
+      ? (personMap.get(authorId) || accountMap.get(authorId) || comment._authorName || 'Unknown')
+      : (comment._authorName || 'Unknown');
+    const text = comment.body || comment.title || '';
+    const snippet = text.slice(0, 100) + (text.length > 100 ? '…' : '');
+
+    const row = document.createElement('div');
+    row.className = 'daily-comment-row';
+    row.innerHTML = `
+      <span class="daily-comment-icon">💬</span>
+      <div class="daily-comment-info">
+        <span class="daily-comment-author">${_esc(authorName)}</span>
+        <span class="daily-comment-body">${_esc(snippet)}</span>
+      </div>
+    `;
+    // Click opens the comment entity in the panel
+    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'note', entityId: comment.id }));
+    list.appendChild(row);
+  }
+
+  body.appendChild(list);
+}
+
 // ── Helper utilities ──────────────────────────────────────── //
 
 /** Escape HTML to prevent XSS */
@@ -1181,6 +1295,44 @@ function _injectStyles() {
     }
     .daily-meal-item:hover { background: var(--color-surface-2); }
   `;
+    /* ── Wall Posts ──────────────────────────────────────── */
+    .daily-wall-list { display: flex; flex-direction: column; gap: var(--space-2); }
+    .daily-wall-row {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-3);
+      padding: var(--space-2-5) var(--space-2);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid var(--color-border);
+      transition: background var(--transition-base);
+    }
+    .daily-wall-row:hover { background: var(--color-surface); }
+    .daily-wall-type-icon { font-size: 1.3rem; flex-shrink: 0; }
+    .daily-wall-info { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+    .daily-wall-author { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--color-text); }
+    .daily-wall-snippet { font-size: var(--text-sm); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .daily-wall-meta { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+    .daily-wall-thumb { width: 52px; height: 52px; object-fit: cover; border-radius: var(--radius-sm); flex-shrink: 0; }
+
+    /* ── Comments ─────────────────────────────────────────── */
+    .daily-comment-list { display: flex; flex-direction: column; gap: var(--space-2); }
+    .daily-comment-row {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-3);
+      padding: var(--space-2-5) var(--space-2);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid var(--color-border);
+      transition: background var(--transition-base);
+    }
+    .daily-comment-row:hover { background: var(--color-surface); }
+    .daily-comment-icon { font-size: 1.1rem; flex-shrink: 0; padding-top: 2px; }
+    .daily-comment-info { flex: 1; display: flex; flex-direction: column; gap: var(--space-0-5); min-width: 0; }
+    .daily-comment-author { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--color-text); }
+    .daily-comment-body { font-size: var(--text-sm); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  `;
   document.head.appendChild(style);
 }
 
@@ -1223,7 +1375,7 @@ async function renderDaily(params = {}) {
 
   try {
     // Load all data in parallel
-    const { tasks, events, notes, appointments, dateEntities, mealPlans, auditLog,
+    const { tasks, events, notes, posts, appointments, dateEntities, mealPlans, auditLog,
             personMap, projectMap, accountMap } =
       await _loadData(dateStr);
 
@@ -1251,16 +1403,22 @@ async function renderDaily(params = {}) {
     // ── Section 4: Notes Created ─────────────────────────────
     _renderNotes(sections, dateStr, notes);
 
-    // ── Section 5: Activity Log ──────────────────────────────
+    // ── Section 5: Wall Posts ────────────────────────────────
+    _renderWallPosts(sections, dateStr, posts, personMap, accountMap);
+
+    // ── Section 6: Comments ──────────────────────────────────
+    _renderComments(sections, dateStr, notes, personMap, accountMap);
+
+    // ── Section 7: Activity Log ──────────────────────────────
     _renderActivityLog(sections, dateStr, auditLog, accountMap);
 
-    // ── Section 6: Reminders ─────────────────────────────────
+    // ── Section 8: Reminders ─────────────────────────────────
     _renderReminders(sections, dateStr, appointments);
 
-    // ── Section 7: Birthdays / Dates ─────────────────────────
+    // ── Section 9: Birthdays / Dates ─────────────────────────
     _renderBirthdays(sections, dateEntities);
 
-    // ── Section 8: Meals Today ───────────────────────────────
+    // ── Section 10: Meals Today ──────────────────────────────
     _renderMeals(sections, dateStr, mealPlans);
 
   } catch (err) {
