@@ -562,11 +562,36 @@ body {
 
 #entity-panel-header {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-3);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+#entity-panel-header-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+#entity-panel-title-row {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+#entity-panel-title {
+  font-family: var(--font-heading);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  color: var(--color-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  line-height: 1.3;
 }
 
 #entity-panel-close {

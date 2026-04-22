@@ -116,9 +116,8 @@ self.addEventListener('activate', (event) => {
 // ── FETCH ─────────────────────────────────────────────────── //
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  const url = new URL(request.url);
 
-  // Only handle same-origin GET requests (not POST/PUT to API)
+  // Only handle same-origin GET requests
   if (request.method !== 'GET') return;
 
   // Network-only: Notion API and PHP sync endpoints
@@ -127,71 +126,32 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For navigations (HTML page requests): Cache First with network fallback,
-  // always return index.html as offline fallback (SPA shell)
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          // Update cache with fresh response
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_SHELL)
-              .then(cache => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => {
-          // Offline: return cached index.html
-          return caches.match('./index.html')
-            .then(cached => cached || caches.match('./'));
-        })
-    );
-    return;
-  }
-
-  // For CSS/JS/assets: Cache First, network fallback
+  // ── Network First for everything ──────────────────────────
+  // Always fetch fresh from network when online; cache for offline only.
+  // This prevents stale JS/CSS/HTML being served after a deployment.
   event.respondWith(
-    caches.match(request)
-      .then(cached => {
-        if (cached) {
-          // Return from cache, update in background (stale-while-revalidate)
-          const networkUpdate = fetch(request)
-            .then(response => {
-              if (response.ok) {
-                caches.open(CACHE_SHELL)
-                  .then(cache => cache.put(request, response.clone()));
-              }
-              return response;
-            })
-            .catch(() => { /* offline — cache is fine */ });
-
-          // Return cached immediately; background update runs asynchronously
-          return cached;
+    fetch(request)
+      .then(response => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_SHELL)
+            .then(cache => cache.put(request, clone))
+            .catch(() => {});
         }
-
-        // Not in cache — fetch from network and cache
-        return fetch(request)
-          .then(response => {
-            if (!response.ok) return response;
-
-            const clone = response.clone();
-            caches.open(CACHE_DYNAMIC)
-              .then(cache => cache.put(request, clone));
-
-            return response;
-          })
-          .catch(err => {
-            console.warn('[SW] Fetch failed for:', request.url, err);
-            // Return a meaningful offline response for assets
-            return new Response(
-              'FamilyHub is offline. Please reconnect to load this resource.',
-              {
-                status: 503,
-                headers: { 'Content-Type': 'text/plain' },
-              }
-            );
-          });
+        return response;
+      })
+      .catch(async () => {
+        // Offline fallback
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        if (request.mode === 'navigate') {
+          const fallback = await caches.match('./index.html');
+          if (fallback) return fallback;
+        }
+        return new Response(
+          'FamilyHub is offline. Please reconnect.',
+          { status: 503, headers: { 'Content-Type': 'text/plain' } }
+        );
       })
   );
 });
