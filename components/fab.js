@@ -106,9 +106,9 @@ export function initFab() {
   });
 
   // ── Listen for fab:create events from other modules ──────
-  on('fab:create', ({ entityType } = {}) => {
+  on(EVENTS.FAB_CREATE, ({ entityType, prefill } = {}) => {
     collapseFab();
-    if (entityType) _handleFabType(entityType);
+    if (entityType) _handleFabType(entityType, prefill);
   });
 
   console.log('[fab] Initialised.');
@@ -137,8 +137,10 @@ export function collapseFab() {
 /**
  * Handle a FAB type click — 'more' opens form with type selector,
  * all others open form pre-set to that type.
+ * @param {string} type
+ * @param {object} [prefill={}] - optional field values to pre-populate
  */
-function _handleFabType(type) {
+function _handleFabType(type, prefill = {}) {
   if (type === 'more') {
     // Determine context-aware default for 'more'
     const view        = getCurrentView()?.viewKey || '';
@@ -146,24 +148,26 @@ function _handleFabType(type) {
     openForm(defaultType);
     return;
   }
-  _openQuickForm(type);
+  _openQuickForm(type, prefill);
 }
 
 /**
  * Open entity form for a specific type, with context-aware prefill.
+ * @param {string} type
+ * @param {object} [callerPrefill={}] - prefill values from the caller (e.g. dueDate from daily.js)
  */
-function _openQuickForm(type) {
+function _openQuickForm(type, callerPrefill = {}) {
   const view    = getCurrentView()?.viewKey || '';
-  const prefill = {};
+  const prefill = { ...callerPrefill };
 
-  // Context-aware prefill: kanban/daily → task gets status:Inbox
+  // Context-aware prefill: kanban/daily → task gets status:Inbox (only if not already set)
   if (type === 'task') {
-    prefill.status   = 'Inbox';
-    prefill.priority = 'Medium';
+    if (!prefill.status)   prefill.status   = 'Inbox';
+    if (!prefill.priority) prefill.priority = 'Medium';
   }
   // family-wall posts prefill type
   if (type === 'post' && view === 'family-wall') {
-    prefill.category = 'Family';
+    if (!prefill.category) prefill.category = 'Family';
   }
 
   openForm(type, prefill);

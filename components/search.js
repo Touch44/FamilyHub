@@ -11,9 +11,8 @@
 
 import { getAllEntityTypes, getEntityTypeConfig } from '../core/graph-engine.js';
 import { getEntitiesByType, getSetting, setSetting } from '../core/db.js';
-import { navigate, showView, VIEW_KEYS }           from '../core/router.js';
+import { navigate, VIEW_KEYS }                         from '../core/router.js';
 import { emit, on, EVENTS }                        from '../core/events.js';
-import { openPanel }                               from './entity-panel.js';
 import { openForm }                                from './entity-form.js';
 
 // ── DOM refs ──────────────────────────────────────────────── //
@@ -332,7 +331,7 @@ const COMMANDS = [
     detail:  'Trigger Notion sync',
     icon:    '🔄',
     keys:    ['sync', 'notion', 'sync now'],
-    action:  () => { closeSearch(); emit('sync:trigger'); },
+    action:  () => { closeSearch(); emit(EVENTS.SYNC_TRIGGER); },
   },
   {
     label:   'Dark Mode',

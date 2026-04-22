@@ -660,17 +660,17 @@
    */
 
   // ── Core imports ──────────────────────────────────────────
+  import './views/daily.js';                                  // registers 'daily' view
   import { on, emit, EVENTS }        from './core/events.js';
-  import { navigate, showView, wireNavItems, handleInitialHash, VIEW_KEYS }
+  import { navigate, wireNavItems, handleInitialHash, VIEW_KEYS }
                                      from './core/router.js';
   import { initDB }                  from './core/db.js';
   import { initGraphEngine }         from './core/graph-engine.js';
   import { initEntityPanel }         from './components/entity-panel.js';
   import { initEntityForm }          from './components/entity-form.js';
   import { initFab }                 from './components/fab.js';
-  import { initSearch, openSearch }  from './components/search.js';
-  import { initAuth, isLoggedIn, isFirstRun, doFirstRun, doLogin, doLogout }
-                                     from './core/auth.js';
+  import { initSearch }              from './components/search.js';
+  import { initAuth }                from './core/auth.js';
 
   // ── App initialisation ────────────────────────────────────
   async function initApp() {
@@ -743,7 +743,7 @@
 
         // Navigation + utility shortcuts (N/T owned by fab.js, Cmd+K by search.js)
         switch (e.key) {
-          case 'e': case 'E': emit('fab:create', { entityType: 'event' }); break;
+          case 'e': case 'E': emit(EVENTS.FAB_CREATE, { entityType: 'event' }); break;
           case 'g': case 'G': navigate(VIEW_KEYS.GRAPH);    break;
           case 'd': case 'D': navigate(VIEW_KEYS.DAILY);    break;
           case 'k': case 'K': navigate(VIEW_KEYS.KANBAN);   break;

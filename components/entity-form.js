@@ -11,9 +11,8 @@
  */
 
 import { saveEntity, saveEdge, getEntitiesByType, uid } from '../core/db.js';
-import { getEntityTypeConfig, getAllEntityTypes,
-         getRelationLabel }                             from '../core/graph-engine.js';
-import { emit, on, EVENTS }                            from '../core/events.js';
+import { getEntityTypeConfig, getAllEntityTypes }        from '../core/graph-engine.js';
+import { emit, EVENTS }                                from '../core/events.js';
 
 // ── Module-level state ────────────────────────────────────── //
 
@@ -46,12 +45,8 @@ const _tagValues = new Map();
  * Wire FAB and keyboard events. Call once during app boot.
  */
 export function initEntityForm() {
-  // Listen for FAB create events from index.html
-  on('fab:create', ({ entityType } = {}) => {
-    if (entityType && entityType !== 'more') {
-      openForm(entityType);
-    }
-  });
+  // fab:create is handled exclusively by fab.js, which calls openForm() directly.
+  // No listener here — a second listener caused every FAB action to open the form twice.
 
   // Global Cmd+Enter to save if form is open
   document.addEventListener('keydown', (e) => {

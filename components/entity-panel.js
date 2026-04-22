@@ -13,7 +13,7 @@ import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
          saveEdge, deleteEdge, getSetting, uid } from '../core/db.js';
 import { getEntityTypeConfig, getAllEntityTypes, getBacklinks,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
-import { on, off, emit, EVENTS } from '../core/events.js';
+import { on, emit, EVENTS } from '../core/events.js';
 
 // ── DOM refs (cached once on init) ───────────────────────── //
 let _panel, _panelBody, _panelTitle, _panelTypeBadge, _panelClose, _savingIndicator, _headerActions;
@@ -1423,118 +1423,6 @@ async function _renderGraphTab(container) {
   }
 }
 
-// ════════════════════════════════════════════════════════════
-// ACTION ROW
-// ════════════════════════════════════════════════════════════
-
-function _renderActionRow(container) {
-  if (!_entity || !_config) return;
-
-  const row = document.createElement('div');
-  row.style.cssText = `
-    display: flex; flex-wrap: wrap; gap: var(--space-2);
-    padding-top: var(--space-4); margin-top: var(--space-4);
-    border-top: 1px solid var(--color-border);
-  `;
-
-  const actions = _config.actions || [];
-
-  // Complete (tasks only)
-  if (_entity.type === 'task' && _entity.status !== 'Done') {
-    _addActionBtn(row, '✓ Complete', 'btn-primary btn-xs', async () => {
-      _entity.status = 'Done';
-      await _save();
-      _renderActiveTab();
-    });
-  }
-
-  // Duplicate
-  if (actions.includes('duplicate')) {
-    _addActionBtn(row, '⧉ Duplicate', 'btn-secondary btn-xs', async () => {
-      const dup = { ..._entity };
-      delete dup.id;
-      delete dup.createdAt;
-      delete dup.updatedAt;
-      const titleK = _getTitleKey(dup.type);
-      if (titleK && dup[titleK]) dup[titleK] += ' (copy)';
-      const saved = await saveEntity(dup);
-      openPanel(saved.id);
-    });
-  }
-
-  // Convert
-  if (actions.includes('convert')) {
-    _addActionBtn(row, '↺ Convert', 'btn-secondary btn-xs', () => {
-      _showConvertPicker(row);
-    });
-  }
-
-  // Delete
-  if (actions.includes('delete')) {
-    _addActionBtn(row, '🗑 Delete', 'btn-danger btn-xs', () => {
-      _confirmDelete();
-    });
-  }
-
-  container.appendChild(row);
-}
-
-function _addActionBtn(parent, label, classes, handler) {
-  const btn = document.createElement('button');
-  btn.className   = `btn ${classes}`;
-  btn.textContent = label;
-  btn.addEventListener('click', handler);
-  parent.appendChild(btn);
-}
-
-async function _confirmDelete() {
-  if (!_entity) return;
-
-  const confirmed = confirm(`Delete this ${_config?.label || 'entity'}? This action cannot be undone.`);
-  if (!confirmed) return;
-
-  try {
-    await deleteEntity(_entity.id);
-    closePanel();
-  } catch (err) {
-    console.error('[entity-panel] Delete failed:', err);
-  }
-}
-
-function _showConvertPicker(row) {
-  // Remove existing picker if any
-  const existing = row.querySelector('.convert-picker');
-  if (existing) { existing.remove(); return; }
-
-  const picker = document.createElement('div');
-  picker.className = 'convert-picker';
-  picker.style.cssText = `
-    display: flex; flex-wrap: wrap; gap: var(--space-1);
-    padding: var(--space-2); background: var(--color-surface);
-    border-radius: var(--radius-sm); border: 1px solid var(--color-border);
-    width: 100%; margin-top: var(--space-2);
-  `;
-
-  const types = getAllEntityTypes();
-  for (const t of types) {
-    if (t.key === _entity.type) continue;
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-ghost btn-xs';
-    btn.textContent = `${t.icon} ${t.label}`;
-    btn.style.fontSize = 'var(--text-xs)';
-    btn.addEventListener('click', async () => {
-      try {
-        const converted = await convertEntity(_entity.id, t.key);
-        openPanel(converted.id);
-      } catch (err) {
-        console.error('[entity-panel] Convert failed:', err);
-      }
-    });
-    picker.appendChild(btn);
-  }
-
-  row.appendChild(picker);
-}
 
 // ════════════════════════════════════════════════════════════
 // SAVE

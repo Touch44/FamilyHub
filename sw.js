@@ -12,7 +12,7 @@
 'use strict';
 
 // ── Cache Names ───────────────────────────────────────────── //
-const APP_VERSION   = '2.0.0';
+const APP_VERSION   = '2.0.1';
 const CACHE_SHELL   = `fh-shell-v${APP_VERSION}`;
 const CACHE_DYNAMIC = `fh-dynamic-v${APP_VERSION}`;
 
@@ -39,6 +39,8 @@ const SHELL_FILES = [
   './components/entity-form.js',
   './components/fab.js',
   './components/search.js',
+  // View modules
+  './views/daily.js',
   // Icons (all sizes + maskable variants for PWA installability)
   './icons/icon-192.png',
   './icons/icon-192-maskable.png',

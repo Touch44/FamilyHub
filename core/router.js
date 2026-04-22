@@ -205,6 +205,7 @@ function _applyView(entry) {
   // Hide all views
   document.querySelectorAll('.view').forEach(el => {
     el.classList.remove('active');
+    el.setAttribute('aria-hidden', 'true');
   });
 
   // Remove graph-active from main (Blueprint §9.2)
@@ -215,6 +216,7 @@ function _applyView(entry) {
   const viewEl = document.getElementById(`view-${viewKey}`);
   if (viewEl) {
     viewEl.classList.add('active');
+    viewEl.setAttribute('aria-hidden', 'false');
   }
 
   // Graph view triggers special layout (Blueprint §9.2)

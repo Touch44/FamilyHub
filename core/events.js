@@ -124,6 +124,7 @@ export const EVENTS = Object.freeze({
   PANEL_CLOSED:       'panel:closed',
 
   // Notion sync
+  SYNC_TRIGGER:       'sync:trigger',
   SYNC_STARTED:       'sync:started',
   SYNC_COMPLETE:      'sync:complete',
   SYNC_ERROR:         'sync:error',
@@ -139,4 +140,7 @@ export const EVENTS = Object.freeze({
   TYPE_CREATED:       'type:created',
   TYPE_FIELD_ADDED:   'type:fieldAdded',
   TYPE_FIELD_REMOVED: 'type:fieldRemoved',
+
+  // FAB / quick-create
+  FAB_CREATE:         'fab:create',
 });
