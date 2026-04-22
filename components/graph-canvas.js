@@ -947,8 +947,9 @@ function _handleMouseUp(e) {
 
     // Double-click detection (< 350ms, same node)
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
-      // Double-click → focus mode
+      // Double-click → focus mode + notify listeners
       setFocusId(node.id);
+      emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
       return;
@@ -1145,6 +1146,7 @@ function _handleTouchEnd(e) {
     const now = Date.now();
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
       setFocusId(node.id);
+      emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
     } else {

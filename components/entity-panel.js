@@ -14,7 +14,11 @@ import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
 import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
-import { initGraph, destroyGraph } from './graph-canvas.js';
+import { initGraph, destroyGraph, setFocusId, refreshGraph } from './graph-canvas.js';
+
+// ── Graph view state ──────────────────────────────────────── //
+let _graphViewActive = false;
+let _graphPreviousView = null;   // viewKey to restore on exit
 
 // ── DOM refs (cached once on init) ───────────────────────── //
 let _panel, _panelBody, _panelTitle, _panelTypeBadge, _panelClose, _savingIndicator, _headerActions;
@@ -67,9 +71,14 @@ export function initEntityPanel() {
     if (_entity && id === _entity.id) closePanel();
   });
 
-  // Graph canvas: clicking a node opens its panel
+  // Graph canvas: single-click updates panel (in graph mode only)
   on('graph:nodeSelected', ({ id } = {}) => {
-    if (id) openPanel(id);
+    if (id) _handleGraphNodeSelected(id);
+  });
+
+  // Graph canvas: double-click drills focus + updates panel
+  on('graph:nodeFocused', ({ id } = {}) => {
+    if (id) _handleGraphNodeFocused(id);
   });
 
   console.log('[entity-panel] Initialised.');
@@ -190,11 +199,16 @@ export async function openPanel(entityId, entityTypeHint) {
 
 /**
  * Close the panel and clean up.
+ * In graph view mode, closing the panel also exits the graph view.
  */
 export function closePanel() {
   if (!_panel) return;
 
-  destroyGraph();
+  // If in graph view mode, close the entire graph view
+  if (_graphViewActive) {
+    _closeGraphView();
+    return;
+  }
 
   _panel.classList.remove('open');
   _panel.setAttribute('aria-hidden', 'true');
@@ -602,9 +616,6 @@ function _renderTabs() {
 function _renderActiveTab() {
   const container = _panelBody.querySelector('.panel-tab-content');
   if (!container) return;
-
-  // Clean up graph canvas if switching away from graph tab
-  destroyGraph();
 
   container.innerHTML = '';
 
@@ -1537,18 +1548,21 @@ async function _renderActivityTab(container) {
 }
 
 // ════════════════════════════════════════════════════════════
-// GRAPH TAB (mini — focus mode)
+// GRAPH VIEW — side-by-side: graph (left) + entity panel (right)
 // ════════════════════════════════════════════════════════════
 
+/**
+ * Graph tab renders a prompt + button to launch the full side-by-side
+ * graph view, or shows a connection summary if already in graph mode.
+ */
 async function _renderGraphTab(container) {
   if (!_entity) return;
 
   try {
     const neighbors = await getNeighbors(_entity.id);
-
     container.innerHTML = '';
 
-    // ── Connection count header ──────────────────────────────
+    // ── Connection summary header ──────────────────────────
     const header = document.createElement('div');
     header.style.cssText = 'text-align: center; padding: var(--space-3) 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs);';
     header.textContent = `${neighbors.length} connection${neighbors.length !== 1 ? 's' : ''}`;
@@ -1565,46 +1579,17 @@ async function _renderGraphTab(container) {
       return;
     }
 
-    // ── Canvas wrapper (gives the canvas a measured parent) ───
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position: relative; width: 100%; height: 320px; border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface);';
-    container.appendChild(wrapper);
+    // ── Launch button ────────────────────────────────────────
+    const launchBtn = document.createElement('button');
+    launchBtn.className = 'btn btn-primary w-full';
+    launchBtn.style.cssText = 'margin: var(--space-3) 0; display: flex; align-items: center; justify-content: center; gap: var(--space-2);';
+    launchBtn.innerHTML = '<span>🔮</span><span>Open Graph View</span>';
+    launchBtn.addEventListener('click', () => _openGraphView(_entity.id));
+    container.appendChild(launchBtn);
 
-    const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'display: block; width: 100%; height: 100%; cursor: default;';
-    wrapper.appendChild(canvas);
-
-    // ── Hint overlay (fades out after 2s) ─────────────────────
-    const hint = document.createElement('div');
-    hint.style.cssText = `
-      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
-      font-size: 10px; color: var(--color-text-muted); background: var(--color-surface-2);
-      padding: 2px 10px; border-radius: var(--radius-sm); pointer-events: none;
-      opacity: 1; transition: opacity 0.6s ease;
-    `;
-    hint.textContent = 'Drag nodes · Scroll to zoom · Double-click to focus';
-    wrapper.appendChild(hint);
-    setTimeout(() => { hint.style.opacity = '0'; }, 3000);
-    setTimeout(() => { hint.remove(); }, 3800);
-
-    // ── Collect the type keys this entity is connected to ─────
-    const neighborTypes = new Set();
-    neighborTypes.add(_entity.type);
-    for (const nb of neighbors) {
-      const ent = await getEntity(nb.entityId);
-      if (ent) neighborTypes.add(ent.type);
-    }
-
-    // ── Launch interactive physics canvas ─────────────────────
-    await initGraph(canvas, {
-      mini: true,
-      focusEntityId: _entity.id,
-      activeTypes: neighborTypes,
-    });
-
-    // ── Legend list below canvas ──────────────────────────────
+    // ── Legend list ───────────────────────────────────────────
     const legend = document.createElement('div');
-    legend.style.cssText = 'display: flex; flex-direction: column; gap: var(--space-1); padding-top: var(--space-3);';
+    legend.style.cssText = 'display: flex; flex-direction: column; gap: var(--space-1); padding-top: var(--space-2);';
 
     const count = Math.min(neighbors.length, 12);
     for (let i = 0; i < count; i++) {
@@ -1613,7 +1598,6 @@ async function _renderGraphTab(container) {
       if (!entity || entity.deleted) continue;
 
       const nConfig = getEntityTypeConfig(entity.type);
-
       const row = document.createElement('div');
       row.style.cssText = `
         display: flex; align-items: center; gap: var(--space-2);
@@ -1645,6 +1629,173 @@ async function _renderGraphTab(container) {
     console.error('[entity-panel] Graph tab error:', err);
     container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-4);">Failed to load graph.</div>';
   }
+}
+
+/**
+ * Open the full side-by-side graph view.
+ * Graph canvas fills #view-graph (left), entity panel stays open (right).
+ * Single-click a node → update panel to that entity.
+ * Double-click a node → drill focus + update panel.
+ * "Exit Graph" button → close graph, return to previous view.
+ */
+async function _openGraphView(entityId) {
+  if (!entityId) return;
+
+  const main    = document.getElementById('main');
+  const viewEl  = document.getElementById('view-graph');
+  if (!main || !viewEl) return;
+
+  // ── Remember current view so we can restore on exit ─────
+  const currentActiveView = document.querySelector('.view.active');
+  _graphPreviousView = currentActiveView?.id?.replace('view-', '') || 'kanban';
+
+  // ── Hide all views, show graph view ─────────────────────
+  document.querySelectorAll('.view').forEach(el => {
+    el.classList.remove('active');
+    el.setAttribute('aria-hidden', 'true');
+  });
+  viewEl.classList.add('active');
+  viewEl.setAttribute('aria-hidden', 'false');
+  main.classList.add('graph-active');
+
+  // ── Build the graph view DOM ────────────────────────────
+  viewEl.innerHTML = '';
+
+  // Graph canvas column (fills the main area)
+  const graphCol = document.createElement('div');
+  graphCol.id = 'graph-canvas-column';
+  graphCol.style.cssText = `
+    position: relative;
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    background: var(--color-surface);
+  `;
+
+  // ── Toolbar ─────────────────────────────────────────────
+  const toolbar = document.createElement('div');
+  toolbar.style.cssText = `
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+    flex-shrink: 0;
+    z-index: 2;
+  `;
+
+  // Title
+  const titleEl = document.createElement('span');
+  titleEl.id = 'graph-view-title';
+  titleEl.style.cssText = 'font-family: var(--font-heading); font-size: var(--text-base); font-weight: var(--weight-semibold); flex: 1;';
+  titleEl.textContent = '🔮 Knowledge Graph';
+  toolbar.appendChild(titleEl);
+
+  // Hint
+  const hintEl = document.createElement('span');
+  hintEl.style.cssText = 'font-size: var(--text-xs); color: var(--color-text-muted);';
+  hintEl.textContent = 'Click: select · Double-click: drill in · Scroll: zoom · Drag: move';
+  toolbar.appendChild(hintEl);
+
+  // Exit button
+  const exitBtn = document.createElement('button');
+  exitBtn.className = 'btn btn-ghost btn-sm';
+  exitBtn.style.cssText = 'display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0;';
+  exitBtn.innerHTML = '<span>✕</span><span>Exit Graph</span>';
+  exitBtn.addEventListener('click', _closeGraphView);
+  toolbar.appendChild(exitBtn);
+
+  graphCol.appendChild(toolbar);
+
+  // ── Canvas ──────────────────────────────────────────────
+  const canvasWrap = document.createElement('div');
+  canvasWrap.style.cssText = 'flex: 1; position: relative; overflow: hidden;';
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'graph-main-canvas';
+  canvas.style.cssText = 'display: block; width: 100%; height: 100%;';
+  canvasWrap.appendChild(canvas);
+  graphCol.appendChild(canvasWrap);
+
+  viewEl.appendChild(graphCol);
+
+  // ── Ensure entity panel is open ─────────────────────────
+  _graphViewActive = true;
+  await openPanel(entityId);
+
+  // ── Force panel to properties tab in graph mode ─────────
+  _activeTab = 'properties';
+  _renderActiveTab();
+
+  // ── Launch graph canvas ─────────────────────────────────
+  // Small delay to ensure canvas has layout dimensions
+  await new Promise(r => setTimeout(r, 50));
+
+  await initGraph(canvas, {
+    mini: false,
+    focusEntityId: entityId,
+  });
+
+  console.log('[entity-panel] [minor] Graph view opened for', entityId);
+}
+
+/**
+ * Close the side-by-side graph view, restore previous view.
+ */
+function _closeGraphView() {
+  destroyGraph();
+  _graphViewActive = false;
+
+  const main   = document.getElementById('main');
+  const viewEl = document.getElementById('view-graph');
+  if (main)   main.classList.remove('graph-active');
+  if (viewEl) {
+    viewEl.classList.remove('active');
+    viewEl.setAttribute('aria-hidden', 'true');
+    viewEl.innerHTML = '';
+  }
+
+  // Restore previous view
+  const prevViewEl = document.getElementById('view-' + (_graphPreviousView || 'kanban'));
+  if (prevViewEl) {
+    prevViewEl.classList.add('active');
+    prevViewEl.setAttribute('aria-hidden', 'false');
+  }
+
+  // Update sidebar active state
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.view === _graphPreviousView);
+  });
+
+  _graphPreviousView = null;
+  closePanel();
+
+  console.log('[entity-panel] [minor] Graph view closed.');
+}
+
+/**
+ * When a node is single-clicked in graph mode, update the panel to show
+ * that entity's properties — but do NOT drill down or navigate away.
+ */
+function _handleGraphNodeSelected(id) {
+  if (!_graphViewActive || !id) return;
+  // Update panel to this entity, keep on properties tab
+  openPanel(id).then(() => {
+    _activeTab = 'properties';
+    _renderActiveTab();
+  });
+}
+
+/**
+ * When a node is double-clicked (focus drilled), update the panel too.
+ */
+function _handleGraphNodeFocused(id) {
+  if (!_graphViewActive || !id) return;
+  openPanel(id).then(() => {
+    _activeTab = 'properties';
+    _renderActiveTab();
+  });
 }
 
 
