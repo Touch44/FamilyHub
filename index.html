@@ -666,6 +666,8 @@
   import { initGraphEngine }         from './core/graph-engine.js';
   import { initEntityPanel }         from './components/entity-panel.js';
   import { initEntityForm }          from './components/entity-form.js';
+  import { initFab }                 from './components/fab.js';
+  import { initSearch, openSearch }  from './components/search.js';
   import { initAuth, isLoggedIn, isFirstRun, doFirstRun, doLogin, doLogout }
                                      from './core/auth.js';
 
@@ -697,36 +699,7 @@
       // 3. Entity panel close button — handled by components/entity-panel.js
       const panel = document.getElementById('entity-panel');
 
-      // 4. Wire search overlay (Cmd+K)
-      const searchBtn     = document.getElementById('topbar-search-btn');
-      const searchOverlay = document.getElementById('search-overlay');
-      const searchInput   = document.getElementById('search-input');
-
-      function openSearch() {
-        if (searchOverlay) {
-          searchOverlay.classList.add('open');
-          searchOverlay.setAttribute('aria-hidden', 'false');
-        }
-        if (searchInput) {
-          searchInput.value = '';
-          searchInput.focus();
-        }
-      }
-
-      function closeSearch() {
-        if (searchOverlay) {
-          searchOverlay.classList.remove('open');
-          searchOverlay.setAttribute('aria-hidden', 'true');
-        }
-      }
-
-      if (searchBtn) searchBtn.addEventListener('click', openSearch);
-
-      if (searchOverlay) {
-        searchOverlay.addEventListener('click', (e) => {
-          if (e.target === searchOverlay) closeSearch();
-        });
-      }
+      // 4. Search overlay — handled by components/search.js (initSearch())
 
       // 5. Wire notifications drawer
       const notifsBtn    = document.getElementById('topbar-notifications-btn');
@@ -746,75 +719,34 @@
         });
       }
 
-      // 6. FAB toggle
-      const fab        = document.getElementById('fab');
-      const fabMainBtn = document.getElementById('fab-main-btn');
-
-      if (fab && fabMainBtn) {
-        fabMainBtn.addEventListener('click', () => {
-          const expanded = fab.classList.toggle('fab-expanded');
-          fabMainBtn.setAttribute('aria-expanded', String(expanded));
-        });
-
-        // Close FAB on click outside
-        document.addEventListener('click', (e) => {
-          if (!fab.contains(e.target)) {
-            fab.classList.remove('fab-expanded');
-            fabMainBtn.setAttribute('aria-expanded', 'false');
-          }
-        });
-
-        // FAB radial item clicks
-        fab.querySelectorAll('.fab-radial-btn[data-fab-type]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const type = btn.dataset.fabType;
-            fab.classList.remove('fab-expanded');
-            fabMainBtn.setAttribute('aria-expanded', 'false');
-            // Entity form will be opened by components/fab.js in Phase 1
-            emit('fab:create', { entityType: type });
-          });
-        });
-      }
+      // 6. FAB — handled by components/fab.js (initFab())
 
       // 7. Keyboard shortcuts (Blueprint §9.3)
+      // N, T → fab.js | Cmd+K + Esc(search) → search.js | FAB Esc → fab.js
+      // Remaining: navigation shortcuts + ? overlay + Esc(shortcuts) + Cmd+Z
       document.addEventListener('keydown', (e) => {
         const inTextField = e.target.matches('input, textarea, [contenteditable="true"], select');
 
-        // Cmd+K — search (always)
-        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-          e.preventDefault();
-          openSearch();
-          return;
-        }
-
-        // Esc — close overlays
+        // Esc — close shortcuts overlay only (panel/search/fab handle their own)
         if (e.key === 'Escape') {
-          closeSearch();
-          // Entity panel Esc is handled by components/entity-panel.js
           const shortcutsOverlay = document.getElementById('shortcuts-overlay');
-          if (shortcutsOverlay) {
+          if (shortcutsOverlay?.classList.contains('open')) {
             shortcutsOverlay.classList.remove('open');
             shortcutsOverlay.setAttribute('aria-hidden', 'true');
           }
-          if (fab) {
-            fab.classList.remove('fab-expanded');
-            if (fabMainBtn) fabMainBtn.setAttribute('aria-expanded', 'false');
-          }
           return;
         }
 
-        if (inTextField) return;
+        if (inTextField || e.metaKey || e.ctrlKey || e.altKey) return;
 
-        // Single-key shortcuts
+        // Navigation + utility shortcuts (N/T owned by fab.js, Cmd+K by search.js)
         switch (e.key) {
-          case 'n': case 'N': emit('fab:create', { entityType: 'note' });  break;
-          case 't': case 'T': emit('fab:create', { entityType: 'task' });  break;
           case 'e': case 'E': emit('fab:create', { entityType: 'event' }); break;
-          case 'g': case 'G': navigate(VIEW_KEYS.GRAPH);            break;
-          case 'd': case 'D': navigate(VIEW_KEYS.DAILY);            break;
-          case 'k': case 'K': navigate(VIEW_KEYS.KANBAN);           break;
-          case 'c': case 'C': navigate(VIEW_KEYS.CALENDAR);         break;
-          case '?':
+          case 'g': case 'G': navigate(VIEW_KEYS.GRAPH);    break;
+          case 'd': case 'D': navigate(VIEW_KEYS.DAILY);    break;
+          case 'k': case 'K': navigate(VIEW_KEYS.KANBAN);   break;
+          case 'c': case 'C': navigate(VIEW_KEYS.CALENDAR); break;
+          case '?': {
             e.preventDefault();
             const so = document.getElementById('shortcuts-overlay');
             if (so) {
@@ -822,9 +754,12 @@
               so.setAttribute('aria-hidden', 'false');
             }
             break;
+          }
         }
+      });
 
-        // Cmd+Z — undo delete
+      // Cmd+Z — undo delete (always, even in text fields)
+      document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
           emit('entity:undoDelete');
         }
@@ -863,6 +798,8 @@
       await initGraphEngine();
       initEntityPanel();
       initEntityForm();
+      initFab();
+      initSearch();
       await initAuth();
 
       // 11. Service Worker registration (Blueprint §8.2)
