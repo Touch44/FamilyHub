@@ -185,12 +185,10 @@ export async function setFocusId(id) {
   if (id) {
     const entity = await getEntity(id);
     if (entity) {
-      const cfg = getEntityTypeConfig(entity.type);
-      const titleKey = _getTitleKey(entity.type);
       _focusTrail.push({
         id:    entity.id,
         type:  entity.type,
-        label: entity[titleKey] || 'Untitled',
+        label: _getDisplayTitle(entity),
       });
     }
     _focusId = id;
@@ -298,13 +296,12 @@ async function _buildGraph() {
     const cfg = getEntityTypeConfig(ent.type);
     if (!cfg) continue;
 
-    const titleKey = _getTitleKey(ent.type);
     const prev     = prevPositions.get(id);
 
     _nodes.push({
       id:    ent.id,
       type:  ent.type,
-      label: (ent[titleKey] || 'Untitled').slice(0, 24),
+      label: _getDisplayTitle(ent).slice(0, 24),
       icon:  cfg.icon,
       color: cfg.color,
       x:     prev ? prev.x : (w / 2) + (Math.random() - 0.5) * w * 0.6,
@@ -1223,6 +1220,24 @@ function _getTitleKey(typeKey) {
   if (!cfg) return 'title';
   const titleField = cfg.fields.find(f => f.isTitle);
   return titleField ? titleField.key : 'title';
+}
+
+/**
+ * Get display title for any entity (derives from body for types without isTitle).
+ */
+function _getDisplayTitle(entity) {
+  if (!entity) return 'Untitled';
+  const cfg = getEntityTypeConfig(entity.type);
+  if (!cfg) return entity.title || entity.name || 'Untitled';
+  const tf = cfg.fields.find(f => f.isTitle);
+  if (tf) return entity[tf.key] || 'Untitled';
+  const bodyField = cfg.fields.find(f => f.type === 'richtext' || f.type === 'text');
+  if (bodyField && entity[bodyField.key]) {
+    const plain = String(entity[bodyField.key]).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (plain.length > 40) return plain.slice(0, 40) + '…';
+    if (plain) return plain;
+  }
+  return entity.title || entity.name || 'Untitled';
 }
 
 // ══════════════════════════════════════════════════════════════

@@ -798,8 +798,7 @@ function _buildRelationControl(field, config) {
 
     const filtered = candidates.filter(e => {
       if (e.deleted) return false;
-      const key = _getTitleKey(e.type);
-      return !query || (e[key] || '').toLowerCase().includes(query.toLowerCase());
+      return !query || _getDisplayTitle(e).toLowerCase().includes(query.toLowerCase());
     }).slice(0, 8);
 
     results.innerHTML = '';
@@ -811,8 +810,7 @@ function _buildRelationControl(field, config) {
     results.style.display = 'block';
     for (const candidate of filtered) {
       const cfg    = getEntityTypeConfig(candidate.type);
-      const titleK = _getTitleKey(candidate.type);
-      const title  = candidate[titleK] || 'Untitled';
+      const title  = _getDisplayTitle(candidate);
 
       const item = document.createElement('div');
       item.style.cssText = `
@@ -1030,4 +1028,20 @@ function _getTitleKey(type) {
   if (!cfg) return 'title';
   const tf = cfg.fields.find(f => f.isTitle);
   return tf ? tf.key : 'title';
+}
+
+/** Get display title for any entity (derives from body for types without isTitle) */
+function _getDisplayTitle(entity) {
+  if (!entity) return 'Untitled';
+  const cfg = getEntityTypeConfig(entity.type);
+  if (!cfg) return entity.title || entity.name || 'Untitled';
+  const tf = cfg.fields.find(f => f.isTitle);
+  if (tf) return entity[tf.key] || 'Untitled';
+  const bodyField = cfg.fields.find(f => f.type === 'richtext' || f.type === 'text');
+  if (bodyField && entity[bodyField.key]) {
+    const plain = String(entity[bodyField.key]).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (plain.length > 40) return plain.slice(0, 40) + '…';
+    if (plain) return plain;
+  }
+  return entity.title || entity.name || 'Untitled';
 }

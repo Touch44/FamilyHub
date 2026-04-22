@@ -154,7 +154,7 @@ async function _renderRecents() {
     const cfg  = getEntityTypeConfig(rec.type);
     const item = _makeResultItem({
       icon:      cfg?.icon || '📎',
-      title:     rec.title || 'Untitled',
+      title:     _getDisplayTitle(rec),
       detail:    cfg?.label || rec.type,
       color:     cfg?.color,
       onActivate: () => {
@@ -189,14 +189,13 @@ async function _renderSearchResults(query) {
 
     const titleField   = cfg.fields.find(f => f.isTitle);
     const detailFields = cfg.fields.filter(f =>
-      !f.isTitle && ['text', 'select', 'date', 'email', 'phone', 'url'].includes(f.type)
-    ).slice(0, 2);
+      !f.isTitle && ['text', 'select', 'date', 'email', 'phone', 'url', 'richtext'].includes(f.type)
+    ).slice(0, 3);
 
     const matches = entities.filter(e => {
       if (e.deleted) return false;
-      const titleKey = titleField?.key || 'title';
-      const title    = (e[titleKey] || '').toLowerCase();
-      if (title.includes(lq)) return true;
+      const displayTitle = _getDisplayTitle(e).toLowerCase();
+      if (displayTitle.includes(lq)) return true;
       // Also search secondary text fields
       return detailFields.some(f => (e[f.key] || '').toString().toLowerCase().includes(lq));
     }).slice(0, 5);
@@ -225,9 +224,7 @@ async function _renderSearchResults(query) {
     _results.appendChild(section.header);
 
     for (const { entity, config } of hits) {
-      const titleField  = config.fields.find(f => f.isTitle);
-      const titleKey    = titleField?.key || 'title';
-      const title       = entity[titleKey] || 'Untitled';
+      const title       = _getDisplayTitle(entity);
       const detailField = config.fields.find(f =>
         !f.isTitle && ['date', 'select', 'text', 'email'].includes(f.type) && entity[f.key]
       );
@@ -573,11 +570,10 @@ async function _trackRecent(entityId) {
         const entities = await getEntitiesByType(cfg.key);
         const match    = entities.find(e => e.id === entityId && !e.deleted);
         if (match) {
-          const titleField = cfg.fields.find(f => f.isTitle);
           found = {
             id:    match.id,
             type:  match.type,
-            title: titleField ? (match[titleField.key] || 'Untitled') : 'Untitled',
+            title: _getDisplayTitle(match),
           };
         }
       } catch { /* skip */ }
@@ -617,4 +613,20 @@ function _formatFieldValue(value, type) {
     } catch { return value; }
   }
   return String(value);
+}
+
+/** Get display title for any entity (derives from body for types without isTitle) */
+function _getDisplayTitle(entity) {
+  if (!entity) return 'Untitled';
+  const cfg = getEntityTypeConfig(entity.type);
+  if (!cfg) return entity.title || entity.name || 'Untitled';
+  const tf = cfg.fields.find(f => f.isTitle);
+  if (tf) return entity[tf.key] || 'Untitled';
+  const bodyField = cfg.fields.find(f => f.type === 'richtext' || f.type === 'text');
+  if (bodyField && entity[bodyField.key]) {
+    const plain = String(entity[bodyField.key]).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (plain.length > 40) return plain.slice(0, 40) + '…';
+    if (plain) return plain;
+  }
+  return entity.title || entity.name || 'Untitled';
 }

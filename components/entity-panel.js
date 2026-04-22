@@ -14,6 +14,7 @@ import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
 import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
+import { initGraph, destroyGraph } from './graph-canvas.js';
 
 // ── DOM refs (cached once on init) ───────────────────────── //
 let _panel, _panelBody, _panelTitle, _panelTypeBadge, _panelClose, _savingIndicator, _headerActions;
@@ -64,6 +65,11 @@ export function initEntityPanel() {
   // Close if entity got deleted
   on(EVENTS.ENTITY_DELETED, ({ id } = {}) => {
     if (_entity && id === _entity.id) closePanel();
+  });
+
+  // Graph canvas: clicking a node opens its panel
+  on('graph:nodeSelected', ({ id } = {}) => {
+    if (id) openPanel(id);
   });
 
   console.log('[entity-panel] Initialised.');
@@ -188,6 +194,8 @@ export async function openPanel(entityId, entityTypeHint) {
 export function closePanel() {
   if (!_panel) return;
 
+  destroyGraph();
+
   _panel.classList.remove('open');
   _panel.setAttribute('aria-hidden', 'true');
   _entity = null;
@@ -272,13 +280,11 @@ function _renderHeader() {
   titleRow.style.minHeight  = '32px';
 
   const titleField = _config.fields.find(f => f.isTitle);
-  const titleVal   = titleField
-    ? (_entity[titleField.key] || '')
-    : (_entity.title || _entity.name || '');
+  const titleVal   = _getDisplayTitle(_entity);
 
   const titleSpan = document.createElement('span');
   titleSpan.id = 'entity-panel-title';
-  titleSpan.textContent = titleVal || 'Untitled';
+  titleSpan.textContent = titleVal;
   titleSpan.title = 'Click to edit title';
   titleSpan.style.cssText = 'font-family:var(--font-heading,Georgia,serif);font-size:1.3125rem;font-weight:700;color:var(--color-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;line-height:1.3;';
   titleSpan.addEventListener('click', () => _makeTitleEditable(titleField));
@@ -596,6 +602,9 @@ function _renderTabs() {
 function _renderActiveTab() {
   const container = _panelBody.querySelector('.panel-tab-content');
   if (!container) return;
+
+  // Clean up graph canvas if switching away from graph tab
+  destroyGraph();
 
   container.innerHTML = '';
 
@@ -1102,7 +1111,7 @@ async function _renderRelationChips(wrap, field) {
     const chip = document.createElement('span');
     chip.className = 'tag-chip';
     chip.style.cssText = 'cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1);';
-    chip.innerHTML = `<span>${linkedConfig?.icon || '📎'}</span> <span>${linked[_getTitleKey(linked.type)] || 'Untitled'}</span>`;
+    chip.innerHTML = `<span>${linkedConfig?.icon || '📎'}</span> <span>${_getDisplayTitle(linked)}</span>`;
 
     // Click to navigate
     chip.addEventListener('click', () => {
@@ -1252,8 +1261,7 @@ async function _showRelationPicker(wrap, field) {
     const filtered = candidates.filter(e => {
       if (e.id === _entity.id) return false;
       if (e.deleted) return false;
-      const titleKey = _getTitleKey(e.type);
-      const t = (e[titleKey] || '').toLowerCase();
+      const t = _getDisplayTitle(e).toLowerCase();
       return !query || t.includes(query);
     }).slice(0, 10);
 
@@ -1266,7 +1274,6 @@ async function _showRelationPicker(wrap, field) {
 
     for (const candidate of filtered) {
       const cfg     = getEntityTypeConfig(candidate.type);
-      const titleK  = _getTitleKey(candidate.type);
 
       const item = document.createElement('div');
       item.style.cssText = `
@@ -1275,7 +1282,7 @@ async function _showRelationPicker(wrap, field) {
         cursor: pointer; font-size: var(--text-sm);
         transition: background var(--transition-fast);
       `;
-      item.innerHTML = `<span>${cfg?.icon || '📎'}</span> <span>${candidate[titleK] || 'Untitled'}</span>`;
+      item.innerHTML = `<span>${cfg?.icon || '📎'}</span> <span>${_getDisplayTitle(candidate)}</span>`;
 
       item.addEventListener('mouseenter', () => { item.style.background = 'var(--color-surface-2)'; });
       item.addEventListener('mouseleave', () => { item.style.background = 'none'; });
@@ -1379,7 +1386,6 @@ async function _renderRelationsTab(container) {
         if (!linked || linked.deleted) continue;
 
         const cfg    = getEntityTypeConfig(linked.type);
-        const titleK = _getTitleKey(linked.type);
 
         const row = document.createElement('div');
         row.style.cssText = `
@@ -1390,7 +1396,7 @@ async function _renderRelationsTab(container) {
 
         row.innerHTML = `
           <span>${cfg?.icon || '📎'}</span>
-          <span style="flex: 1; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${linked[titleK] || 'Untitled'}</span>
+          <span style="flex: 1; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${_getDisplayTitle(linked)}</span>
           <span class="type-badge" style="background: ${cfg?.color || '#94A3B8'}; font-size: 0.55rem; padding: 1px var(--space-1-5);">${cfg?.label || linked.type}</span>
         `;
 
@@ -1542,9 +1548,9 @@ async function _renderGraphTab(container) {
 
     container.innerHTML = '';
 
-    // Mini graph header
+    // ── Connection count header ──────────────────────────────
     const header = document.createElement('div');
-    header.style.cssText = 'text-align: center; padding: var(--space-4) 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs);';
+    header.style.cssText = 'text-align: center; padding: var(--space-3) 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs);';
     header.textContent = `${neighbors.length} connection${neighbors.length !== 1 ? 's' : ''}`;
     container.appendChild(header);
 
@@ -1559,101 +1565,54 @@ async function _renderGraphTab(container) {
       return;
     }
 
-    // Render a simple radial graph visualisation using SVG
-    const svgNS   = 'http://www.w3.org/2000/svg';
-    const size    = 280;
-    const cx      = size / 2;
-    const cy      = size / 2;
-    const centerR = 24;
-    const nodeR   = 16;
-    const orbitR  = size / 2 - 36;
+    // ── Canvas wrapper (gives the canvas a measured parent) ───
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position: relative; width: 100%; height: 320px; border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface);';
+    container.appendChild(wrapper);
 
-    const svg = document.createElementNS(svgNS, 'svg');
-    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
-    svg.setAttribute('width', '100%');
-    svg.setAttribute('height', String(size));
-    svg.style.cssText = 'display: block; margin: 0 auto;';
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'display: block; width: 100%; height: 100%; cursor: default;';
+    wrapper.appendChild(canvas);
 
-    // Draw edges
-    const count = Math.min(neighbors.length, 12);
-    for (let i = 0; i < count; i++) {
-      const angle = (2 * Math.PI * i) / count - Math.PI / 2;
-      const nx    = cx + orbitR * Math.cos(angle);
-      const ny    = cy + orbitR * Math.sin(angle);
+    // ── Hint overlay (fades out after 2s) ─────────────────────
+    const hint = document.createElement('div');
+    hint.style.cssText = `
+      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; color: var(--color-text-muted); background: var(--color-surface-2);
+      padding: 2px 10px; border-radius: var(--radius-sm); pointer-events: none;
+      opacity: 1; transition: opacity 0.6s ease;
+    `;
+    hint.textContent = 'Drag nodes · Scroll to zoom · Double-click to focus';
+    wrapper.appendChild(hint);
+    setTimeout(() => { hint.style.opacity = '0'; }, 3000);
+    setTimeout(() => { hint.remove(); }, 3800);
 
-      const line = document.createElementNS(svgNS, 'line');
-      line.setAttribute('x1', String(cx));
-      line.setAttribute('y1', String(cy));
-      line.setAttribute('x2', String(nx));
-      line.setAttribute('y2', String(ny));
-      line.setAttribute('stroke', 'var(--color-border)');
-      line.setAttribute('stroke-width', '1.5');
-      svg.appendChild(line);
+    // ── Collect the type keys this entity is connected to ─────
+    const neighborTypes = new Set();
+    neighborTypes.add(_entity.type);
+    for (const nb of neighbors) {
+      const ent = await getEntity(nb.entityId);
+      if (ent) neighborTypes.add(ent.type);
     }
 
-    // Center node
-    const centerCircle = document.createElementNS(svgNS, 'circle');
-    centerCircle.setAttribute('cx', String(cx));
-    centerCircle.setAttribute('cy', String(cy));
-    centerCircle.setAttribute('r', String(centerR));
-    centerCircle.setAttribute('fill', _config.color);
-    svg.appendChild(centerCircle);
+    // ── Launch interactive physics canvas ─────────────────────
+    await initGraph(canvas, {
+      mini: true,
+      focusEntityId: _entity.id,
+      activeTypes: neighborTypes,
+    });
 
-    const centerLabel = document.createElementNS(svgNS, 'text');
-    centerLabel.setAttribute('x', String(cx));
-    centerLabel.setAttribute('y', String(cy + 1));
-    centerLabel.setAttribute('text-anchor', 'middle');
-    centerLabel.setAttribute('dominant-baseline', 'central');
-    centerLabel.setAttribute('fill', '#fff');
-    centerLabel.setAttribute('font-size', '14');
-    centerLabel.textContent = _config.icon;
-    svg.appendChild(centerLabel);
-
-    // Neighbor nodes
-    for (let i = 0; i < count; i++) {
-      const angle    = (2 * Math.PI * i) / count - Math.PI / 2;
-      const nx       = cx + orbitR * Math.cos(angle);
-      const ny       = cy + orbitR * Math.sin(angle);
-      const neighbor = neighbors[i];
-
-      const entity   = await getEntity(neighbor.entityId);
-      const nConfig  = entity ? getEntityTypeConfig(entity.type) : null;
-
-      const circle = document.createElementNS(svgNS, 'circle');
-      circle.setAttribute('cx', String(nx));
-      circle.setAttribute('cy', String(ny));
-      circle.setAttribute('r', String(nodeR));
-      circle.setAttribute('fill', nConfig?.color || '#94A3B8');
-      circle.setAttribute('cursor', 'pointer');
-      circle.addEventListener('click', () => openPanel(neighbor.entityId));
-      svg.appendChild(circle);
-
-      const label = document.createElementNS(svgNS, 'text');
-      label.setAttribute('x', String(nx));
-      label.setAttribute('y', String(ny + 1));
-      label.setAttribute('text-anchor', 'middle');
-      label.setAttribute('dominant-baseline', 'central');
-      label.setAttribute('fill', '#fff');
-      label.setAttribute('font-size', '11');
-      label.setAttribute('cursor', 'pointer');
-      label.textContent = nConfig?.icon || '📎';
-      label.addEventListener('click', () => openPanel(neighbor.entityId));
-      svg.appendChild(label);
-    }
-
-    container.appendChild(svg);
-
-    // Legend list below graph
+    // ── Legend list below canvas ──────────────────────────────
     const legend = document.createElement('div');
     legend.style.cssText = 'display: flex; flex-direction: column; gap: var(--space-1); padding-top: var(--space-3);';
 
+    const count = Math.min(neighbors.length, 12);
     for (let i = 0; i < count; i++) {
       const neighbor = neighbors[i];
       const entity   = await getEntity(neighbor.entityId);
       if (!entity || entity.deleted) continue;
 
       const nConfig = getEntityTypeConfig(entity.type);
-      const titleK  = _getTitleKey(entity.type);
 
       const row = document.createElement('div');
       row.style.cssText = `
@@ -1664,7 +1623,7 @@ async function _renderGraphTab(container) {
       `;
       row.innerHTML = `
         <span style="width: 10px; height: 10px; border-radius: var(--radius-full); background: ${nConfig?.color || '#94A3B8'}; flex-shrink: 0;"></span>
-        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${entity[titleK] || 'Untitled'}</span>
+        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${_getDisplayTitle(entity)}</span>
         <span style="color: var(--color-text-muted);">${nConfig?.label || entity.type}</span>
       `;
       row.addEventListener('mouseenter', () => { row.style.background = 'var(--color-surface-2)'; });
@@ -1745,6 +1704,45 @@ function _getTitleKey(type) {
   if (!cfg) return 'title';
   const tf = cfg.fields.find(f => f.isTitle);
   return tf ? tf.key : 'title';
+}
+
+/**
+ * Get a human-readable display title for any entity.
+ * For types with an isTitle field (task, person, etc.) → use that field.
+ * For types without one (post) → derive from body/first text field, truncated.
+ * @param {object} entity
+ * @param {string} [type] — entity.type override
+ * @returns {string}
+ */
+function _getDisplayTitle(entity, type) {
+  if (!entity) return 'Untitled';
+  const t   = type || entity.type;
+  const cfg = getEntityTypeConfig(t);
+  if (!cfg) return entity.title || entity.name || 'Untitled';
+
+  // 1. Try isTitle field
+  const tf = cfg.fields.find(f => f.isTitle);
+  if (tf) {
+    const val = entity[tf.key];
+    return val ? String(val) : 'Untitled';
+  }
+
+  // 2. No isTitle field — derive from body / first text/richtext field
+  const bodyField = cfg.fields.find(f =>
+    f.type === 'richtext' || f.type === 'text'
+  );
+  if (bodyField) {
+    const raw = entity[bodyField.key];
+    if (raw) {
+      // Strip HTML tags, collapse whitespace, truncate
+      const plain = String(raw).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      if (plain.length > 40) return plain.slice(0, 40) + '…';
+      if (plain) return plain;
+    }
+  }
+
+  // 3. Last resort fallbacks
+  return entity.title || entity.name || entity.label || 'Untitled';
 }
 
 /** Format ISO date string for display */
