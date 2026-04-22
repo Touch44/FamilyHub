@@ -12,7 +12,7 @@
 'use strict';
 
 // ── Cache Names ───────────────────────────────────────────── //
-const APP_VERSION   = '2.0.1';
+const APP_VERSION   = '2.0.4';
 const CACHE_SHELL   = `fh-shell-v${APP_VERSION}`;
 const CACHE_DYNAMIC = `fh-dynamic-v${APP_VERSION}`;
 

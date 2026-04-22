@@ -33,21 +33,13 @@ let _dirty      = false;
  * Wire panel events. Call once during app boot after DOM is ready.
  */
 export function initEntityPanel() {
-  _panel          = document.getElementById('entity-panel');
-  _panelBody      = document.getElementById('entity-panel-body');
-  _panelTitle     = document.getElementById('entity-panel-title');
-  _panelTypeBadge = document.getElementById('entity-panel-type-badge');
-  _panelClose     = document.getElementById('entity-panel-close');
-  _savingIndicator= document.getElementById('panel-saving-indicator');
-  _headerActions  = document.getElementById('entity-panel-header-actions');
+  _panel     = document.getElementById('entity-panel');
+  _panelBody = document.getElementById('entity-panel-body');
 
   if (!_panel || !_panelBody) {
     console.warn('[entity-panel] Panel DOM not found — skipping init.');
     return;
   }
-
-  // Close button
-  _panelClose?.addEventListener('click', closePanel);
 
   // Esc key closes panel
   document.addEventListener('keydown', (e) => {
@@ -145,31 +137,68 @@ export function closePanel() {
 function _renderHeader() {
   if (!_entity || !_config) return;
 
-  // Type badge
-  if (_panelTypeBadge) {
-    _panelTypeBadge.textContent = `${_config.icon} ${_config.label}`;
-    _panelTypeBadge.style.background = _config.color;
-  }
+  // Rebuild the entire header from scratch every time
+  // This makes it immune to any cached version of index.html
+  const headerEl = document.getElementById('entity-panel-header');
+  if (!headerEl) return;
+  headerEl.innerHTML = '';
 
-  // Title — editable on click
-  if (_panelTitle) {
-    const titleField = _config.fields.find(f => f.isTitle);
-    const titleVal   = titleField ? (_entity[titleField.key] || '') : (_entity.title || _entity.name || '');
+  // ── Row 1: type badge · saving indicator · action buttons · close ──
+  const topRow = document.createElement('div');
+  topRow.id = 'entity-panel-header-top';
+  topRow.style.cssText = 'display:flex;align-items:center;gap:var(--space-2);';
 
-    _panelTitle.textContent = titleVal || 'Untitled';
-    _panelTitle.title       = 'Click to edit title';
+  const badge = document.createElement('span');
+  badge.id = 'entity-panel-type-badge';
+  badge.className = 'type-badge';
+  badge.setAttribute('aria-hidden', 'true');
+  badge.textContent = `${_config.icon} ${_config.label}`;
+  badge.style.background = _config.color;
+  topRow.appendChild(badge);
+  _panelTypeBadge = badge;
 
-    // Remove old listener by cloning
-    const newTitle = _panelTitle.cloneNode(true);
-    _panelTitle.replaceWith(newTitle);
-    _panelTitle = newTitle;
+  const savingInd = document.createElement('span');
+  savingInd.id = 'panel-saving-indicator';
+  savingInd.className = 'panel-saving-indicator hidden';
+  savingInd.setAttribute('aria-live', 'polite');
+  savingInd.textContent = 'Saving…';
+  topRow.appendChild(savingInd);
+  _savingIndicator = savingInd;
 
-    _panelTitle.addEventListener('click', () => {
-      _makeTitleEditable(titleField);
-    });
-  }
+  const actionsDiv = document.createElement('div');
+  actionsDiv.id = 'entity-panel-header-actions';
+  actionsDiv.style.cssText = 'display:flex;gap:var(--space-1);align-items:center;margin-left:auto;';
+  topRow.appendChild(actionsDiv);
+  _headerActions = actionsDiv;
 
-  // Header action buttons
+  const closeBtn = document.createElement('button');
+  closeBtn.id = 'entity-panel-close';
+  closeBtn.setAttribute('aria-label', 'Close entity panel');
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', closePanel);
+  topRow.appendChild(closeBtn);
+  _panelClose = closeBtn;
+
+  headerEl.appendChild(topRow);
+
+  // ── Row 2: title (full width, large heading) ──────────────
+  const titleRow = document.createElement('div');
+  titleRow.id = 'entity-panel-title-row';
+
+  const titleField = _config.fields.find(f => f.isTitle);
+  const titleVal   = titleField ? (_entity[titleField.key] || '') : (_entity.title || _entity.name || '');
+
+  const titleSpan = document.createElement('span');
+  titleSpan.id = 'entity-panel-title';
+  titleSpan.textContent = titleVal || 'Untitled';
+  titleSpan.title = 'Click to edit title';
+  titleSpan.addEventListener('click', () => _makeTitleEditable(titleField));
+  titleRow.appendChild(titleSpan);
+  _panelTitle = titleSpan;
+
+  headerEl.appendChild(titleRow);
+
+  // ── Action buttons ─────────────────────────────────────────
   _renderHeaderActions();
 }
 
