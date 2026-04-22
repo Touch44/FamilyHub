@@ -159,6 +159,23 @@ export function forward() {
 }
 
 /**
+ * Jump directly to a specific cursor position (avoids calling _applyView multiple times).
+ * Used by breadcrumb multi-step navigation.
+ * @param {number} targetCursor
+ */
+export function jumpTo(targetCursor) {
+  if (targetCursor < 0 || targetCursor >= _history.length) return false;
+  if (targetCursor === _cursor) return false;
+  _cursor = targetCursor;
+  const entry = _history[_cursor];
+  _applyView(entry);
+  _updateHash(entry.viewKey, entry.params);
+  _renderBreadcrumbs();
+  emit(EVENTS.VIEW_CHANGED, { viewKey: entry.viewKey, params: entry.params, label: entry.label });
+  return true;
+}
+
+/**
  * Returns the current view entry.
  * @returns {HistoryEntry|null}
  */
@@ -278,6 +295,10 @@ function _renderBreadcrumbs() {
   if (backBtn) {
     backBtn.disabled = !canGoBack();
   }
+  const fwdBtn = document.getElementById('breadcrumb-fwd-btn');
+  if (fwdBtn) {
+    fwdBtn.disabled = !canGoForward();
+  }
 
   // Build breadcrumb trail — show last 4 entries max
   const trail = _history.slice(Math.max(0, _cursor - 3), _cursor + 1);
@@ -305,12 +326,7 @@ function _renderBreadcrumbs() {
     if (isClickable) {
       const targetCursor = _cursor - (trail.length - 1 - i);
       item.addEventListener('click', () => {
-        const diff = targetCursor - _cursor;
-        if (diff < 0) {
-          for (let j = 0; j < Math.abs(diff); j++) back();
-        } else if (diff > 0) {
-          for (let j = 0; j < diff; j++) forward();
-        }
+        jumpTo(targetCursor);
       });
     }
 
@@ -408,5 +424,9 @@ export function wireNavItems() {
   const backBtn = document.getElementById('breadcrumb-back-btn');
   if (backBtn) {
     backBtn.addEventListener('click', () => back());
+  }
+  const fwdBtn = document.getElementById('breadcrumb-fwd-btn');
+  if (fwdBtn) {
+    fwdBtn.addEventListener('click', () => forward());
   }
 }

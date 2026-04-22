@@ -54,8 +54,9 @@ const ENTITY_REGISTRY = {
     color:     'var(--color-success)',     // green
     icon:      '✅',
     label:     'Task',
-    dateField: 'dueDate',                // date-only
-    hasTime:   false,
+    dateField: 'dueDate',                // date string; dueTime holds HH:MM
+    timeField: 'dueTime',                // optional "HH:MM", defaults "06:00"
+    hasTime:   true,
     recurring: false,
     filterFn:  (entity) => !DONE_STATUSES.has(entity.status),
   },
@@ -104,7 +105,11 @@ const WEEKDAYS_FULL  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 
 
 /** Hour grid range for week view */
 const HOUR_START = 6;
-const HOUR_END   = 22;
+const HOUR_END       = 22;
+/** Fixed pixel height per hour row — deterministic positioning */
+const SLOT_HEIGHT_PX = 60;
+/** Drag-drop snap interval in minutes */
+const SNAP_MINUTES   = 10;
 
 /** Agenda lookahead (days) */
 const AGENDA_DAYS = 14;
@@ -295,6 +300,12 @@ function _buildDateMap(data, rangeStart, rangeEnd) {
     for (const entity of entities) {
       // Apply custom filter (e.g. exclude done tasks)
       if (reg.filterFn && !reg.filterFn(entity)) continue;
+
+      // For tasks: synthesize a datetime ISO from dueDate + dueTime (default 06:00)
+      if (typeKey === 'task' && entity.dueDate) {
+        const tRaw = (entity.dueTime || '06:00').slice(0, 5);
+        entity._dateTimeISO = `${entity.dueDate}T${tRaw}:00`;
+      }
 
       const rawDate = entity[reg.dateField];
       if (!rawDate) continue;
@@ -1086,7 +1097,7 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
   if (!gutterEl) return;
   const gutterWidth = gutterEl.offsetWidth;
   const bodyRect    = bodyEl.getBoundingClientRect();
-  const slotHeight  = firstSlot.offsetHeight;
+  const slotHeight  = SLOT_HEIGHT_PX;  // fixed 60px per hour
   const dayWidth    = (bodyRect.width - gutterWidth) / 7;
 
   for (let d = 0; d < 7; d++) {
@@ -1095,18 +1106,21 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
     const ds = _toDateStr(dayDate);
     const items = dateMap.get(ds) || [];
 
-    // Filter to timed events/appointments within visible range
-    // EXCLUDE multi-day events (shown as all-day chips instead)
+    // Filter to timed items within visible hour range
     const timedItems = items.filter(it => {
       const reg = ENTITY_REGISTRY[it.entityType];
       if (!reg || !reg.hasTime) return false;
-      // Skip multi-day events
+      const dateISO = it.entityType === 'task'
+        ? (it.entity._dateTimeISO || null)
+        : it.entity.date;
+      if (!dateISO) return false;
+      // For multi-day events: always include (we compute per-day slice below)
       if (it.entityType === 'event' && it.entity.endDate) {
         const startDs = _isoToLocalDate(it.entity.date);
-        const endDs = _isoToLocalDate(it.entity.endDate);
-        if (startDs && endDs && startDs !== endDs) return false;
+        const endDs   = _isoToLocalDate(it.entity.endDate);
+        if (startDs && endDs && startDs !== endDs) return true; // multi-day
       }
-      const h = _isoToLocalHourFrac(it.entity.date);
+      const h = _isoToLocalHourFrac(dateISO);
       return h !== null && h >= HOUR_START && h < HOUR_END;
     });
 
@@ -1115,10 +1129,35 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
     // ── Overlap detection: assign column indices ──
     // Sort by start time, then find groups of overlapping events
     const sorted = timedItems.map(it => {
-      const startH = _isoToLocalHourFrac(it.entity.date);
-      const dur = it.entityType === 'event'
-        ? _durationHours(it.entity.date, it.entity.endDate) : 1;
-      return { ...it, startH, endH: startH + dur };
+      const dateISO = it.entityType === 'task'
+        ? (it.entity._dateTimeISO || it.entity.dueDate)
+        : it.entity.date;
+
+      let startH, endH;
+
+      if (it.entityType === 'event' && it.entity.endDate) {
+        const startDs  = _isoToLocalDate(it.entity.date);
+        const endDs    = _isoToLocalDate(it.entity.endDate);
+        const isMulti  = startDs && endDs && startDs !== endDs;
+        if (isMulti) {
+          const isFirst = ds === startDs;
+          const isLast  = ds === endDs;
+          if (isFirst)       { startH = _isoToLocalHourFrac(it.entity.date) ?? HOUR_START; endH = HOUR_END; }
+          else if (isLast)   { startH = HOUR_START; endH = _isoToLocalHourFrac(it.entity.endDate) ?? HOUR_END; }
+          else               { startH = HOUR_START; endH = HOUR_END; }
+        } else {
+          startH = _isoToLocalHourFrac(dateISO) ?? HOUR_START;
+          endH   = Math.min(startH + Math.max(_durationHours(it.entity.date, it.entity.endDate), 0.5), HOUR_END);
+        }
+      } else if (it.entityType === 'task') {
+        startH = _isoToLocalHourFrac(dateISO) ?? 6;
+        endH   = Math.min(startH + 0.5, HOUR_END);
+      } else {
+        startH = _isoToLocalHourFrac(dateISO) ?? HOUR_START;
+        endH   = Math.min(startH + 1, HOUR_END);
+      }
+
+      return { ...it, startH, endH, _dateISO: dateISO };
     }).sort((a, b) => a.startH - b.startH);
 
     // Greedy column assignment
@@ -1163,7 +1202,7 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
 
       const blockTime = document.createElement('span');
       blockTime.className = 'cal-week-event-time';
-      blockTime.textContent = _formatTime(item.entity.date);
+      blockTime.textContent = _formatTime(item._dateISO || item.entity.date);
 
       block.append(blockTitle, blockTime);
 
@@ -1323,10 +1362,11 @@ function _makeDraggable(el, entityType, entityId) {
 let _dragPayload = null;
 
 /**
- * Make a cell a drop target that reschedules the dragged entity to `newDateStr`.
- * For week time slots, also accepts `newHour` (integer).
+ * Make a cell a drop target. Snaps to SNAP_MINUTES (10) increments.
+ * baseHour is the integer hour of this row; Y position within slot
+ * determines the snapped minute.
  */
-function _makeDropTarget(el, newDateStr, newHour) {
+function _makeDropTarget(el, newDateStr, baseHour) {
   el.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -1339,11 +1379,18 @@ function _makeDropTarget(el, newDateStr, newHour) {
     e.preventDefault();
     el.classList.remove('cal-drop-target');
     let payload;
-    try {
-      payload = JSON.parse(e.dataTransfer.getData('text/plain'));
-    } catch { return; }
+    try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
     if (!payload?.entityId || !payload?.entityType) return;
-    await _rescheduleEntity(payload.entityType, payload.entityId, newDateStr, newHour);
+
+    let hour = baseHour, min = 0;
+    if (baseHour != null) {
+      const rect   = el.getBoundingClientRect();
+      const relY   = Math.max(0, Math.min(e.clientY - rect.top, rect.height - 1));
+      const rawMin = (relY / rect.height) * 60;
+      min  = Math.round(rawMin / SNAP_MINUTES) * SNAP_MINUTES;
+      if (min >= 60) { hour++; min = 0; }
+    }
+    await _rescheduleEntity(payload.entityType, payload.entityId, newDateStr, hour, min);
   });
 }
 
@@ -1351,7 +1398,7 @@ function _makeDropTarget(el, newDateStr, newHour) {
  * Reschedule an entity to a new date (and optionally time).
  * Updates the appropriate date field based on entity type registry.
  */
-async function _rescheduleEntity(entityType, entityId, newDateStr, newHour) {
+async function _rescheduleEntity(entityType, entityId, newDateStr, newHour, newMin = 0) {
   try {
     const allByType = await getEntitiesByType(entityType);
     const entity = allByType.find(e => e.id === entityId);
@@ -1363,15 +1410,20 @@ async function _rescheduleEntity(entityType, entityId, newDateStr, newHour) {
     const oldValue = entity[dateField];
 
     if (reg.hasTime && newHour != null) {
-      // Timed entity: set to specific hour on new date
       const hourStr = String(newHour).padStart(2, '0');
-      entity[dateField] = new Date(`${newDateStr}T${hourStr}:00:00`).toISOString();
-      // If event has endDate, shift it by the same delta
-      if (entityType === 'event' && entity.endDate && oldValue) {
-        const oldStart = new Date(oldValue);
-        const newStart = new Date(entity[dateField]);
-        const delta = newStart - oldStart;
-        entity.endDate = new Date(new Date(entity.endDate).getTime() + delta).toISOString();
+      const minStr  = String(newMin).padStart(2, '0');
+      if (entityType === 'task') {
+        entity.dueDate = newDateStr;
+        entity.dueTime = `${hourStr}:${minStr}`;
+        entity._dateTimeISO = `${newDateStr}T${hourStr}:${minStr}:00`;
+      } else {
+        entity[dateField] = new Date(`${newDateStr}T${hourStr}:${minStr}:00`).toISOString();
+        if (entityType === 'event' && entity.endDate && oldValue) {
+          const oldStart = new Date(oldValue);
+          const newStart = new Date(entity[dateField]);
+          const delta    = newStart - oldStart;
+          entity.endDate = new Date(new Date(entity.endDate).getTime() + delta).toISOString();
+        }
       }
     } else if (reg.hasTime) {
       // Timed entity dropped on day cell (no specific hour): preserve time, change date
@@ -1387,8 +1439,12 @@ async function _rescheduleEntity(entityType, entityId, newDateStr, newHour) {
         entity[dateField] = newDateStr + 'T12:00:00';
       }
     } else {
-      // Date-only entity (task, mealPlan): just set the date string
-      entity[dateField] = newDateStr;
+      if (entityType === 'task') {
+        entity.dueDate = newDateStr;
+        if (!entity.dueTime) entity.dueTime = '06:00';
+      } else {
+        entity[dateField] = newDateStr;
+      }
     }
 
     await saveEntity(entity);
@@ -1804,8 +1860,18 @@ function _injectStyles() {
     }
     .cal-week-hour-row {
       display: flex;
-      min-height: 48px;
+      height: 60px;
+      flex-shrink: 0;
       border-bottom: 1px solid var(--color-border);
+      position: relative;
+    }
+    .cal-week-hour-row::after {
+      content: '';
+      position: absolute;
+      left: 52px; right: 0; top: 50%;
+      border-top: 1px dashed var(--color-border);
+      opacity: 0.4;
+      pointer-events: none;
     }
     .cal-week-hour-row:last-child { border-bottom: none; }
     .cal-hour-label {

@@ -22,7 +22,7 @@
  */
 
 import { registerView, navigate, VIEW_KEYS } from '../core/router.js';
-import { getEntitiesByType, getSetting,
+import { getEntitiesByType, getEntity, getSetting,
          saveEntity, uid }                 from '../core/db.js';
 import { emit, EVENTS }                    from '../core/events.js';
 import { getAccount }                      from '../core/auth.js';
@@ -680,10 +680,10 @@ function _renderNotes(container, dateStr, notes) {
  * accountMap resolves byAccountId to display name.
  * Rows are clickable to open the referenced entity.
  */
-function _renderActivityLog(container, dateStr, auditLog, accountMap) {
+async function _renderActivityLog(container, dateStr, auditLog, accountMap) {
   const filtered = _filterAuditLog(auditLog, dateStr)
-    .slice(-50)          // cap at 50 most recent
-    .reverse();          // newest first
+    .slice(-50)
+    .reverse();
   const { wrapper, body } = _buildSection('activity', '📋', 'Activity Log', filtered.length);
   container.appendChild(wrapper);
 
@@ -695,23 +695,44 @@ function _renderActivityLog(container, dateStr, auditLog, accountMap) {
   const list = document.createElement('div');
   list.className = 'daily-activity-list';
 
-  for (const entry of filtered) {
-    const row = document.createElement('div');
-    // Rows with an entityId are clickable
-    const isClickable = !!(entry.entityId && entry.entityType);
-    row.className = 'daily-activity-row' + (isClickable ? ' daily-activity-row-clickable' : '');
+  // Resolve entity names and existence for all entries in parallel
+  const resolved = await Promise.all(filtered.map(async entry => {
+    if (!entry.entityId) return { entry, entity: null, exists: false, name: '—' };
+    try {
+      const e = await getEntity(entry.entityId);
+      const exists = !!(e && !e.deleted);
+      const name = exists
+        ? (e.title || e.name || e.label || entry.entityTitle || entry.entityId)
+        : (entry.entityTitle || entry.entityId || '—');
+      return { entry, entity: e, exists, name };
+    } catch {
+      return { entry, entity: null, exists: false, name: entry.entityTitle || entry.entityId || '—' };
+    }
+  }));
 
-    const actionLabel  = _formatAction(entry.action);
-    const displayName  = entry.byAccountId
+  for (const { entry, exists, name } of resolved) {
+    const row = document.createElement('div');
+    const hasLink = !!(entry.entityId && entry.entityType);
+    const isClickable = hasLink && exists;
+    row.className = 'daily-activity-row' +
+      (isClickable ? ' daily-activity-row-clickable' : '');
+
+    const actionLabel = _formatAction(entry.action);
+    const displayName = entry.byAccountId
       ? (accountMap.get(entry.byAccountId) || entry.byAccountId)
       : null;
 
+    // Status indicator: ↗ if clickable, "✕ Deleted" badge if entity gone
+    const statusHtml = !hasLink ? '' : isClickable
+      ? `<span class="daily-activity-open-hint" aria-hidden="true" title="Open">↗</span>`
+      : `<span class="badge daily-activity-gone" title="Item no longer exists">Deleted</span>`;
+
     row.innerHTML = `
       <span class="daily-activity-action badge badge-action">${_esc(actionLabel)}</span>
-      <span class="daily-activity-title">${_esc(entry.entityTitle || entry.entityId || '—')}</span>
+      <span class="daily-activity-title">${_esc(name)}</span>
       ${displayName ? `<span class="daily-activity-by">by ${_esc(displayName)}</span>` : ''}
       <span class="daily-activity-time">${_formatLogTime(entry.at)}</span>
-      ${isClickable ? `<span class="daily-activity-open-hint" aria-hidden="true">↗</span>` : ''}
+      ${statusHtml}
     `;
 
     if (isClickable) {
@@ -1234,7 +1255,8 @@ function _injectStyles() {
     .daily-activity-title { flex: 1; font-weight: var(--weight-medium); color: var(--color-text); font-size: var(--text-sm); min-width: 80px; }
     .daily-activity-by   { color: var(--color-text-muted); }
     .daily-activity-time { color: var(--color-text-muted); margin-left: auto; font-variant-numeric: tabular-nums; }
-    .daily-activity-open-hint { color: var(--color-text-muted); font-size: var(--text-xs); flex-shrink: 0; }
+    .daily-activity-open-hint { color: var(--color-accent); font-size: var(--text-xs); flex-shrink: 0; font-weight: var(--weight-semibold); }
+    .daily-activity-gone { background: var(--color-danger-bg); color: var(--color-danger-text); font-size: var(--text-xs); padding: 1px 6px; border-radius: 999px; flex-shrink: 0; }
 
     /* ── Reminders ───────────────────────────────────── */
     .daily-reminder-list { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -1417,7 +1439,7 @@ async function renderDaily(params = {}) {
     _renderComments(sections, dateStr, notes, personMap, accountMap);
 
     // ── Section 7: Activity Log ──────────────────────────────
-    _renderActivityLog(sections, dateStr, auditLog, accountMap);
+    await _renderActivityLog(sections, dateStr, auditLog, accountMap);
 
     // ── Section 8: Reminders ─────────────────────────────────
     _renderReminders(sections, dateStr, appointments);

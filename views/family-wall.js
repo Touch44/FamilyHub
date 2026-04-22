@@ -291,40 +291,69 @@ function _mkFileLabel(labelText, accept, onFile) {
  * @param {Element}  sp       - the <span> label element to show progress in
  * @param {Function} onDone   - callback(dataUrl) when read is complete
  */
+/**
+ * Read a file for upload with instant visual feedback.
+ *
+ * Strategy (fastest possible UX):
+ *   Phase 1 (0ms)   — createObjectURL gives an instant preview src.
+ *   Phase 2 (async) — ArrayBuffer → manual chunked base64 via requestIdleCallback.
+ *                     Chunks of 192KB keep the main thread free and update the
+ *                     progress bar smoothly. No full-file blocking call.
+ *
+ * Caller receives { blobUrl, dataUrl:null } immediately for preview,
+ * then { blobUrl:null, dataUrl } once encoding finishes.
+ */
 function _readFileWithProgress(file, sp, onDone) {
-  // Phase 1: instant blob-URL preview (0ms, no encoding needed)
+  // Phase 1: instant preview
   const blobUrl = URL.createObjectURL(file);
-
-  // Show label immediately
-  sp.innerHTML = `<span class="fw-prog-wrap"><span class="fw-prog-bar" style="width:5%"></span></span> <span class="fw-prog-txt">Reading…</span>`;
+  sp.innerHTML = `<span class="fw-prog-wrap"><span class="fw-prog-bar" style="width:2%"></span></span> <span class="fw-prog-txt">0%</span>`;
   const bar = sp.querySelector('.fw-prog-bar');
   const txt = sp.querySelector('.fw-prog-txt');
-
-  // Fire callback immediately with blobUrl so caller can show preview NOW
-  // (blobUrl works for <img src> but NOT for storing in IndexedDB)
-  // Caller receives { blobUrl, dataUrl:null } initially, then dataUrl when ready
   onDone({ blobUrl, dataUrl: null, file });
 
-  // Phase 2: base64 encode in background for storage
+  // Phase 2: read as ArrayBuffer then chunk-encode to base64
   const reader = new FileReader();
-  reader.onprogress = (e) => {
-    if (e.lengthComputable && bar && txt) {
-      const pct = Math.round((e.loaded / e.total) * 100);
-      bar.style.width = pct + '%';
-      txt.textContent = pct + '%';
+  reader.onerror = () => { sp.textContent = '❌ Failed to read'; };
+
+  reader.onload = (ev) => {
+    const ab      = ev.target.result;
+    const bytes   = new Uint8Array(ab);
+    const CHUNK   = 196608; // 192 KB — safe chunk for btoa
+    const total   = bytes.length;
+    let   offset  = 0;
+    let   b64     = '';
+
+    function encodeChunk() {
+      const end   = Math.min(offset + CHUNK, total);
+      const slice = bytes.subarray(offset, end);
+      // btoa requires a binary string
+      let bin = '';
+      for (let i = 0; i < slice.length; i++) bin += String.fromCharCode(slice[i]);
+      b64    += btoa(bin);
+      offset  = end;
+
+      const pct = Math.round((offset / total) * 100);
+      if (bar) bar.style.width = pct + '%';
+      if (txt) txt.textContent = pct + '%';
+
+      if (offset < total) {
+        // Yield to browser between chunks so UI stays responsive
+        requestIdleCallback ? requestIdleCallback(encodeChunk, { timeout: 50 })
+                            : setTimeout(encodeChunk, 0);
+      } else {
+        // Done — assemble data URL
+        URL.revokeObjectURL(blobUrl);
+        if (bar) bar.style.width = '100%';
+        if (txt) txt.textContent = '✅ ' + file.name;
+        const dataUrl = `data:${file.type || 'application/octet-stream'};base64,${b64}`;
+        onDone({ blobUrl: null, dataUrl, file });
+      }
     }
+
+    encodeChunk();
   };
-  reader.onload = (e) => {
-    URL.revokeObjectURL(blobUrl);
-    if (bar) bar.style.width = '100%';
-    if (txt) txt.textContent = '✅ ' + file.name;
-    // Fire again with real dataUrl for storage
-    onDone({ blobUrl: null, dataUrl: e.target.result, file });
-  };
-  reader.onerror = () => {
-    sp.textContent = '❌ Failed to read file';
-  };
-  reader.readAsDataURL(file);
+
+  reader.readAsArrayBuffer(file);
 }
 
 // ── Filter bar ───────────────────────────────────────────────
