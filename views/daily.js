@@ -25,7 +25,7 @@ import { registerView }                    from '../core/router.js';
 import { getEntitiesByType, getSetting,
          saveEntity, uid }                 from '../core/db.js';
 import { emit, EVENTS }                    from '../core/events.js';
-import { getAccount }                      from '../core/auth.js';
+import { getAccount, getAllAccounts }       from '../core/auth.js';
 
 // ── Constants ─────────────────────────────────────────────── //
 
@@ -149,7 +149,7 @@ function _setSectionOpen(key, open) {
  */
 async function _loadData(dateStr) {
   const [tasks, events, notes, appointments, dateEntities, mealPlans, auditLog,
-         persons, projects] =
+         persons, projects, accounts] =
     await Promise.all([
       getEntitiesByType('task'),
       getEntitiesByType('event'),
@@ -160,14 +160,20 @@ async function _loadData(dateStr) {
       getSetting('auditLog'),
       getEntitiesByType('person'),
       getEntitiesByType('project'),
+      getAllAccounts().catch(() => []),
     ]);
 
   // Build lookup maps for relation resolution
   const personMap  = new Map(persons.map(p  => [p.id, p.name  || p.title || p.id]));
   const projectMap = new Map(projects.map(pr => [pr.id, pr.name || pr.title || pr.id]));
+  // accountMap: accountId → display name (username fallback)
+  const accountMap = new Map((accounts || []).map(a => [
+    a.id,
+    a.displayName || a.username || a.id,
+  ]));
 
   return { tasks, events, notes, appointments, dateEntities, mealPlans,
-           auditLog: auditLog || [], personMap, projectMap };
+           auditLog: auditLog || [], personMap, projectMap, accountMap };
 }
 
 /**
@@ -314,6 +320,7 @@ function _buildTopBar(container, dateStr) {
       <button class="btn-icon daily-prev-btn" title="Previous day" aria-label="Previous day">‹</button>
       <h1 class="daily-headline" id="daily-headline">${_formatHeadline(_currentDate)}</h1>
       <button class="btn-icon daily-next-btn" title="Next day" aria-label="Next day">›</button>
+      <button class="btn btn-ghost btn-sm daily-today-btn" title="Go to today" aria-label="Go to today">Today</button>
       <div class="daily-quick-btns">
         <button class="btn btn-primary btn-sm daily-add-task-btn">+ Task</button>
         <button class="btn btn-ghost btn-sm daily-add-note-btn">+ Note</button>
@@ -333,6 +340,18 @@ function _buildTopBar(container, dateStr) {
     _currentDate.setDate(_currentDate.getDate() + 1);
     renderDaily({ _internal: true });
   });
+
+  bar.querySelector('.daily-today-btn').addEventListener('click', () => {
+    _currentDate = _todayLocal();
+    renderDaily({ _internal: true });
+  });
+
+  // Dim "Today" button when already viewing today
+  const todayBtn = bar.querySelector('.daily-today-btn');
+  if (_toDateStr(_currentDate) === _toDateStr(_todayLocal())) {
+    todayBtn.disabled = true;
+    todayBtn.style.opacity = '0.4';
+  }
 
   bar.querySelector('.daily-add-task-btn').addEventListener('click', () => {
     emit(EVENTS.FAB_CREATE, { entityType: 'task', prefill: { dueDate: dateStr } });
@@ -521,7 +540,7 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
         <input type="checkbox" class="daily-task-checkbox"
                data-id="${task.id}" aria-label="Complete task" />
       </label>
-      <div class="daily-task-info">
+      <div class="daily-task-info daily-task-info-clickable">
         <span class="daily-task-title ${prioClass}">${_esc(task.title || 'Untitled')}</span>
         <div class="daily-task-meta">
           ${projectName  ? `<span class="chip chip-project" title="Project">📁 ${_esc(projectName)}</span>` : ''}
@@ -533,6 +552,11 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
         </div>
       </div>
     `;
+
+    // Clicking the info area opens the entity panel; checkbox handles completion
+    row.querySelector('.daily-task-info-clickable').addEventListener('click', () => {
+      emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: task.id });
+    });
 
     const checkbox = row.querySelector('.daily-task-checkbox');
     checkbox.addEventListener('change', async () => {
@@ -627,8 +651,10 @@ function _renderNotes(container, dateStr, notes) {
 
 /**
  * Section 5: Activity Log — audit log entries for today.
+ * accountMap resolves byAccountId to display name.
+ * Rows are clickable to open the referenced entity.
  */
-function _renderActivityLog(container, dateStr, auditLog) {
+function _renderActivityLog(container, dateStr, auditLog, accountMap) {
   const filtered = _filterAuditLog(auditLog, dateStr)
     .slice(-50)          // cap at 50 most recent
     .reverse();          // newest first
@@ -645,14 +671,29 @@ function _renderActivityLog(container, dateStr, auditLog) {
 
   for (const entry of filtered) {
     const row = document.createElement('div');
-    row.className = 'daily-activity-row';
-    const actionLabel = _formatAction(entry.action);
+    // Rows with an entityId are clickable
+    const isClickable = !!(entry.entityId && entry.entityType);
+    row.className = 'daily-activity-row' + (isClickable ? ' daily-activity-row-clickable' : '');
+
+    const actionLabel  = _formatAction(entry.action);
+    const displayName  = entry.byAccountId
+      ? (accountMap.get(entry.byAccountId) || entry.byAccountId)
+      : null;
+
     row.innerHTML = `
       <span class="daily-activity-action badge badge-action">${_esc(actionLabel)}</span>
       <span class="daily-activity-title">${_esc(entry.entityTitle || entry.entityId || '—')}</span>
-      ${entry.byAccountId ? `<span class="daily-activity-by">by ${_esc(entry.byAccountId)}</span>` : ''}
+      ${displayName ? `<span class="daily-activity-by">by ${_esc(displayName)}</span>` : ''}
       <span class="daily-activity-time">${_formatLogTime(entry.at)}</span>
+      ${isClickable ? `<span class="daily-activity-open-hint" aria-hidden="true">↗</span>` : ''}
     `;
+
+    if (isClickable) {
+      row.addEventListener('click', () => {
+        emit(EVENTS.PANEL_OPENED, { entityType: entry.entityType, entityId: entry.entityId });
+      });
+    }
+
     list.appendChild(row);
   }
 
@@ -977,6 +1018,8 @@ function _injectStyles() {
     .daily-task-check-label { cursor: pointer; padding-top: 2px; flex-shrink: 0; }
     .daily-task-checkbox { width: 15px; height: 15px; cursor: pointer; accent-color: var(--color-accent); }
     .daily-task-info { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }
+    .daily-task-info-clickable { cursor: pointer; }
+    .daily-task-info-clickable:hover .daily-task-title { color: var(--color-accent); }
     .daily-task-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-text); }
     .daily-task-meta { display: flex; flex-wrap: wrap; gap: var(--space-1-5); align-items: center; }
 
@@ -1055,9 +1098,18 @@ function _injectStyles() {
       border: 1px solid var(--color-border);
       flex-wrap: wrap;
     }
+    .daily-activity-row-clickable {
+      cursor: pointer;
+      transition: background var(--transition-base);
+    }
+    .daily-activity-row-clickable:hover {
+      background: var(--color-surface);
+      border-color: var(--color-accent);
+    }
     .daily-activity-title { flex: 1; font-weight: var(--weight-medium); color: var(--color-text); font-size: var(--text-sm); min-width: 80px; }
     .daily-activity-by   { color: var(--color-text-muted); }
     .daily-activity-time { color: var(--color-text-muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+    .daily-activity-open-hint { color: var(--color-text-muted); font-size: var(--text-xs); flex-shrink: 0; }
 
     /* ── Reminders ───────────────────────────────────── */
     .daily-reminder-list { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -1168,7 +1220,7 @@ async function renderDaily(params = {}) {
   try {
     // Load all data in parallel
     const { tasks, events, notes, appointments, dateEntities, mealPlans, auditLog,
-            personMap, projectMap } =
+            personMap, projectMap, accountMap } =
       await _loadData(dateStr);
 
     // Clear and rebuild
@@ -1196,7 +1248,7 @@ async function renderDaily(params = {}) {
     _renderNotes(sections, dateStr, notes);
 
     // ── Section 5: Activity Log ──────────────────────────────
-    _renderActivityLog(sections, dateStr, auditLog);
+    _renderActivityLog(sections, dateStr, auditLog, accountMap);
 
     // ── Section 6: Reminders ─────────────────────────────────
     _renderReminders(sections, dateStr, appointments);
