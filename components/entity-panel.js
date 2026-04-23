@@ -2686,7 +2686,12 @@ function _getDisplayTitle(entity, type) {
 function _formatDate(iso) {
   if (!iso) return '';
   try {
-    const d = new Date(iso);
+    // Date-only strings (YYYY-MM-DD) must be parsed as LOCAL midnight.
+    // new Date('2026-04-20') treats the string as UTC midnight, which
+    // shifts the displayed date by -1 day in timezones west of UTC.
+    // Appending T00:00:00 (no Z) forces local-time interpretation.
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + 'T00:00:00' : iso;
+    const d = new Date(normalized);
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   } catch {
     return iso;
