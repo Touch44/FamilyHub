@@ -663,6 +663,25 @@ const BUILT_IN_ENTITY_TYPES = [
     ],
   },
 
+  // ── 25. dailyReview ───────────────────────────────────── //
+  {
+    key:         'dailyReview',
+    label:       'Daily Review',
+    labelPlural: 'Daily Reviews',
+    icon:        '☀️',
+    color:       '#f59e0b',
+    isBuiltIn:   true,
+    graphVisible: true,
+    defaultSort:  '-date',
+    views:        ['daily'],
+    actions:      ['edit', 'relate'],
+    fields: [
+      field('date',  'date',     { isTitle: false, label: 'Date', required: true }),
+      field('title', 'title',    { isTitle: true,  label: 'Title' }),
+      field('notes', 'richtext', { isTitle: false,  label: 'Notes' }),
+    ],
+  },
+
 ];
 
 // ── In-memory registry ────────────────────────────────────── //

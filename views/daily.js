@@ -23,7 +23,8 @@
 
 import { registerView, navigate, VIEW_KEYS } from '../core/router.js';
 import { getEntitiesByType, getEntity, getSetting,
-         saveEntity, uid }                 from '../core/db.js';
+         saveEntity, saveEdge, getEdgesFrom, deleteEdge,
+         uid }                             from '../core/db.js';
 import { emit, EVENTS }                    from '../core/events.js';
 import { getAccount }                      from '../core/auth.js';
 
@@ -331,6 +332,154 @@ async function _saveDailyNote(dateStr, body, existingId) {
     dailyDate: dateStr,
   };
   return saveEntity(entity, account?.id);
+}
+
+// ── Daily Review entity helpers ───────────────────────────── //
+
+/**
+ * Find or create the single Daily Review entity for a given date string.
+ * Stored as a 'dailyReview' type entity with date = dateStr and
+ * title = 'Daily Review — YYYY-MM-DD'. One per date, idempotent.
+ * @param {string} dateStr  'YYYY-MM-DD'
+ * @returns {Promise<object>} the dailyReview entity
+ */
+async function _getOrCreateDailyReview(dateStr) {
+  try {
+    const existing = await getEntitiesByType('dailyReview');
+    const found = existing.find(dr => dr.date === dateStr && !dr.deleted);
+    if (found) return found;
+
+    const account = getAccount();
+    return await saveEntity({
+      type:  'dailyReview',
+      title: `Daily Review — ${dateStr}`,
+      date:  dateStr,
+    }, account?.id);
+  } catch (err) {
+    console.error('[daily] _getOrCreateDailyReview failed:', dateStr, err);
+    return null;
+  }
+}
+
+/**
+ * Create a bidirectional edge pair between the Daily Review and a section entity.
+ * Checks for existing edges first to keep things idempotent.
+ * relation: 'contains' (dailyReview → entity) and 'in daily review' (entity → dailyReview)
+ *
+ * @param {string} drId           Daily Review entity ID
+ * @param {string} entityId       Section item entity ID
+ * @param {string} entityType     Section item entity type key
+ * @param {Set<string>} existing  Set of entity IDs already linked (to skip)
+ */
+async function _linkToDailyReview(drId, entityId, entityType, existing) {
+  if (!drId || !entityId || existing.has(entityId)) return;
+  try {
+    await saveEdge({
+      fromId:   drId,
+      fromType: 'dailyReview',
+      toId:     entityId,
+      toType:   entityType,
+      relation: 'contains',
+    });
+  } catch (err) {
+    console.warn('[daily] saveEdge contains failed:', entityId, err);
+  }
+}
+
+/**
+ * Sync all bidirectional links from the Daily Review for a given date to
+ * every item currently visible in the Daily Review sections.
+ *
+ * Called after data is loaded, before rendering. Non-blocking — awaited
+ * but errors are caught so they never interrupt the render.
+ *
+ * @param {string} dateStr
+ * @param {object} data   — the loaded data object from _loadData
+ * @returns {Promise<string>} the daily review entity ID (for reference)
+ */
+async function _syncDailyReviewLinks(dateStr, data) {
+  try {
+    const dr = await _getOrCreateDailyReview(dateStr);
+    if (!dr) return null;
+
+    // Build set of already-linked entity IDs to skip
+    const existing = await getEdgesFrom(dr.id, 'contains');
+    const linkedSet = new Set(existing.map(e => e.toId));
+
+    // ── Tasks: due today or overdue ───────────────────────
+    const filteredTasks = data.tasks.filter(t => {
+      if (new Set(['done', 'Done']).has(t.status)) return false;
+      const due = _isoToLocalDate(t.dueDate);
+      return due && due <= dateStr;
+    });
+    for (const t of filteredTasks) {
+      await _linkToDailyReview(dr.id, t.id, 'task', linkedSet);
+      linkedSet.add(t.id);
+    }
+
+    // ── Events: date = today ──────────────────────────────
+    for (const e of data.events.filter(e => _isoToLocalDate(e.date) === dateStr)) {
+      await _linkToDailyReview(dr.id, e.id, 'event', linkedSet);
+      linkedSet.add(e.id);
+    }
+
+    // ── Notes created today (not Daily Notes themselves) ──
+    for (const n of data.notes.filter(n =>
+      n.type !== 'daily-note' &&
+      n.category !== 'Comment' &&
+      _isoToLocalDate(n.createdAt) === dateStr
+    )) {
+      await _linkToDailyReview(dr.id, n.id, 'note', linkedSet);
+      linkedSet.add(n.id);
+    }
+
+    // ── Wall posts created today ──────────────────────────
+    for (const p of data.posts.filter(p => _isoToLocalDate(p.createdAt) === dateStr)) {
+      await _linkToDailyReview(dr.id, p.id, 'post', linkedSet);
+      linkedSet.add(p.id);
+    }
+
+    // ── Comments created today ────────────────────────────
+    for (const c of data.notes.filter(n =>
+      n.category === 'Comment' && _isoToLocalDate(n.createdAt) === dateStr
+    )) {
+      await _linkToDailyReview(dr.id, c.id, 'note', linkedSet);
+      linkedSet.add(c.id);
+    }
+
+    // ── Reminders (appointments with reminder=true, date today) ──
+    for (const a of data.appointments.filter(a =>
+      a.reminder && _isoToLocalDate(a.date) === dateStr
+    )) {
+      await _linkToDailyReview(dr.id, a.id, 'appointment', linkedSet);
+      linkedSet.add(a.id);
+    }
+
+    // ── Birthdays/Dates (month+day match) ────────────────
+    const currentDate = _currentDate;
+    const todayMonth = currentDate.getMonth() + 1;
+    const todayDay   = currentDate.getDate();
+    for (const de of data.dateEntities.filter(de => {
+      const local = _isoToLocalDate(de.date);
+      if (!local) return false;
+      const parts = local.split('-');
+      return parseInt(parts[1], 10) === todayMonth && parseInt(parts[2], 10) === todayDay;
+    })) {
+      await _linkToDailyReview(dr.id, de.id, 'dateEntity', linkedSet);
+      linkedSet.add(de.id);
+    }
+
+    // ── Meals today ───────────────────────────────────────
+    for (const mp of data.mealPlans.filter(mp => _isoToLocalDate(mp.date) === dateStr)) {
+      await _linkToDailyReview(dr.id, mp.id, 'mealPlan', linkedSet);
+      linkedSet.add(mp.id);
+    }
+
+    return dr.id;
+  } catch (err) {
+    console.error('[daily] _syncDailyReviewLinks failed:', err);
+    return null;
+  }
 }
 
 // ── DOM builders ──────────────────────────────────────────── //
@@ -1425,6 +1574,12 @@ async function renderDaily(params = {}) {
             personMap, projectMap, accountMap } =
       await _loadData(dateStr);
 
+    // ── Sync Daily Review entity + bidirectional links (non-blocking) ─
+    // Run in background — don't let link errors break the render
+    _syncDailyReviewLinks(dateStr, {
+      tasks, events, notes, posts, appointments, dateEntities, mealPlans,
+    }).catch(err => console.warn('[daily] Daily Review sync error (non-fatal):', err));
+
     // Clear and rebuild
     viewEl.innerHTML = '';
 
@@ -1455,17 +1610,17 @@ async function renderDaily(params = {}) {
     // ── Section 6: Comments ──────────────────────────────────
     _renderComments(sections, dateStr, notes, personMap, accountMap);
 
-    // ── Section 7: Activity Log ──────────────────────────────
-    await _renderActivityLog(sections, dateStr, auditLog, accountMap);
-
-    // ── Section 8: Reminders ─────────────────────────────────
+    // ── Section 7: Reminders ─────────────────────────────────
     _renderReminders(sections, dateStr, appointments);
 
-    // ── Section 9: Birthdays / Dates ─────────────────────────
+    // ── Section 8: Birthdays / Dates ─────────────────────────
     _renderBirthdays(sections, dateEntities);
 
-    // ── Section 10: Meals Today ──────────────────────────────
+    // ── Section 9: Meals Today ───────────────────────────────
     _renderMeals(sections, dateStr, mealPlans);
+
+    // ── Section 10: Activity Log (last) ──────────────────────
+    await _renderActivityLog(sections, dateStr, auditLog, accountMap);
 
   } catch (err) {
     console.error('[daily] Render failed:', err);

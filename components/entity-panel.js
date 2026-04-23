@@ -48,6 +48,8 @@ const TYPE_VIEW_MAP = {
   goal:         'entity-type/goal',
   habit:        'entity-type/habit',
   medication:   'entity-type/medication',
+  // Daily Review → daily view
+  dailyReview:  'daily',
 };
 
 // ── DOM refs (cached once on init) ───────────────────────── //
@@ -1376,96 +1378,64 @@ async function _showRelationPicker(wrap, field) {
 // RELATIONS TAB
 // ════════════════════════════════════════════════════════════
 
-// ── Daily-link system ─────────────────────────────────────────
-// Entities with createdAt or dueDate are auto-linked to the Daily Note
-// entity for those dates. Called whenever a panel opens.
+// ── Daily Review link system ──────────────────────────────────
+// Entities with temporal dates auto-link to their Daily Review entity.
 
 /**
- * Find or create the Daily Note entity for a given date string.
- * Daily Notes are note entities with category:'Daily' and dailyDate:'YYYY-MM-DD'.
+ * Find or create the Daily Review entity (type:'dailyReview') for a date.
  * @param {string} dateStr  — 'YYYY-MM-DD'
- * @returns {Promise<object>} the daily note entity
+ * @returns {Promise<object>} the dailyReview entity
  */
-async function _getOrCreateDailyNote(dateStr) {
+async function _getOrCreateDailyReview(dateStr) {
   if (!dateStr) return null;
   try {
-    const notes = await getEntitiesByType('note');
-    const existing = notes.find(n => n.dailyDate === dateStr && !n.deleted);
-    if (existing) return existing;
-    // Create it
-    const now = new Date().toISOString();
+    const existing = await getEntitiesByType('dailyReview');
+    const found = existing.find(dr => dr.date === dateStr && !dr.deleted);
+    if (found) return found;
     return await saveEntity({
-      type:      'note',
-      title:     `Daily Note — ${dateStr}`,
-      body:      '',
-      category:  'Daily',
-      dailyDate: dateStr,
-      createdAt: now,
+      type:  'dailyReview',
+      title: `Daily Review — ${dateStr}`,
+      date:  dateStr,
     });
   } catch (err) {
-    console.warn('[entity-panel] _getOrCreateDailyNote failed:', dateStr, err);
+    console.warn('[entity-panel] _getOrCreateDailyReview failed:', dateStr, err);
     return null;
   }
 }
 
 /**
- * Ensure the entity is linked to Daily Note entities for its createdAt
- * and/or dueDate. Idempotent — won't create duplicate edges.
- * Only runs for entity types that have temporal relevance.
+ * Ensure the entity is linked to Daily Review entities for its temporal dates.
+ * Idempotent — checks existing edges before creating. Non-blocking.
  * @param {object} entity
  */
 async function _ensureDailyLinks(entity) {
   if (!entity?.id || !entity?.type) return;
 
-  // Types that should NOT auto-link (Daily Notes themselves, tags, settings-like)
-  const SKIP_TYPES = new Set(['note', 'tag', 'budgetEntry', 'mealPlan', 'shoppingItem']);
+  // Skip Daily Reviews themselves and types without temporal meaning
+  const SKIP_TYPES = new Set(['dailyReview', 'tag', 'note']);
   if (SKIP_TYPES.has(entity.type)) return;
 
-  // Collect dates to link
   const datesToLink = new Set();
-
-  // 1. createdAt date
-  if (entity.createdAt) {
-    const d = _isoToLocalDate(entity.createdAt);
-    if (d) datesToLink.add(d);
-  }
-
-  // 2. dueDate (tasks, etc.)
-  if (entity.dueDate) {
-    const d = _isoToLocalDate(entity.dueDate);
-    if (d) datesToLink.add(d);
-  }
-
-  // 3. date field (events, appointments, dateEntity, mealPlan)
-  if (entity.date) {
-    const d = _isoToLocalDate(entity.date);
-    if (d) datesToLink.add(d);
-  }
-
-  // 4. startDate (trips)
-  if (entity.startDate) {
-    const d = _isoToLocalDate(entity.startDate);
-    if (d) datesToLink.add(d);
-  }
+  if (entity.createdAt) { const d = _isoToLocalDate(entity.createdAt); if (d) datesToLink.add(d); }
+  if (entity.dueDate)   { const d = _isoToLocalDate(entity.dueDate);   if (d) datesToLink.add(d); }
+  if (entity.date)      { const d = _isoToLocalDate(entity.date);      if (d) datesToLink.add(d); }
+  if (entity.startDate) { const d = _isoToLocalDate(entity.startDate); if (d) datesToLink.add(d); }
 
   if (datesToLink.size === 0) return;
 
-  // Get existing edges from this entity to avoid duplicates
-  const existingEdges = await getEdgesFrom(entity.id, 'daily review');
-  const linkedDailyIds = new Set(existingEdges.map(e => e.toId));
+  const existingEdges = await getEdgesFrom(entity.id, 'in daily review');
+  const linkedIds = new Set(existingEdges.map(e => e.toId));
 
   for (const dateStr of datesToLink) {
     try {
-      const dailyNote = await _getOrCreateDailyNote(dateStr);
-      if (!dailyNote) continue;
-      if (linkedDailyIds.has(dailyNote.id)) continue; // already linked
-
+      const dr = await _getOrCreateDailyReview(dateStr);
+      if (!dr || linkedIds.has(dr.id)) continue;
       await saveEdge({
         fromId:   entity.id,
         fromType: entity.type,
-        toId:     dailyNote.id,
-        toType:   'note',
-        relation: 'daily review',
+        toId:     dr.id,
+        toType:   'dailyReview',
+        relation: 'in daily review',
       });
     } catch (err) {
       console.warn('[entity-panel] _ensureDailyLinks failed for date:', dateStr, err);
