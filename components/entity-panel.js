@@ -10,15 +10,45 @@
  */
 
 import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
-         saveEdge, deleteEdge, getSetting } from '../core/db.js';
+         saveEdge, deleteEdge, getSetting, getEntitiesByType } from '../core/db.js';
 import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
-import { initGraph, destroyGraph, setFocusId, refreshGraph } from './graph-canvas.js';
+import { initGraph, destroyGraph, setFocusId, refreshGraph, setActiveTypes } from './graph-canvas.js';
+import { navigate, VIEW_KEYS } from '../core/router.js';
 
 // ── Graph view state ──────────────────────────────────────── //
 let _graphViewActive = false;
 let _graphPreviousView = null;   // viewKey to restore on exit
+let _graphTypeFilters = new Set(); // entity types currently shown in graph
+
+// ── Entity type → native view mapping ─────────────────────── //
+const TYPE_VIEW_MAP = {
+  task:         'kanban',
+  event:        'calendar',
+  note:         'notes',
+  project:      'projects',
+  post:         'family-wall',
+  budgetEntry:  'budget',
+  recipe:       'recipes',
+  document:     'documents',
+  contact:      'contacts',
+  mealPlan:     'recipes',
+  shoppingItem: 'kanban',
+  appointment:  'calendar',
+  dateEntity:   'calendar',
+  person:       'contacts',
+  // Generic entity types → entity-type view
+  idea:         'entity-type/idea',
+  research:     'entity-type/research',
+  book:         'entity-type/book',
+  trip:         'entity-type/trip',
+  place:        'entity-type/place',
+  weblink:      'entity-type/weblink',
+  goal:         'entity-type/goal',
+  habit:        'entity-type/habit',
+  medication:   'entity-type/medication',
+};
 
 // ── DOM refs (cached once on init) ───────────────────────── //
 let _panel, _panelBody, _panelTitle, _panelTypeBadge, _panelClose, _savingIndicator, _headerActions;
@@ -255,6 +285,9 @@ function _renderHeader() {
   badge.setAttribute('aria-hidden', 'true');
   badge.textContent = `${_config.icon} ${_config.label}`;
   badge.style.background = _config.color;
+  badge.style.cursor = 'pointer';
+  badge.title = `Go to ${_config.labelPlural || _config.label} view`;
+  badge.addEventListener('click', () => _navigateToEntityView(_entity, _config));
   topRow.appendChild(badge);
   _panelTypeBadge = badge;
 
@@ -1677,8 +1710,8 @@ async function _openGraphView(entityId) {
   // ── Toolbar ─────────────────────────────────────────────
   const toolbar = document.createElement('div');
   toolbar.style.cssText = `
-    display: flex; align-items: center; gap: var(--space-3);
-    padding: var(--space-2) var(--space-4);
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border);
     background: var(--color-bg);
     flex-shrink: 0;
@@ -1688,25 +1721,54 @@ async function _openGraphView(entityId) {
   // Title
   const titleEl = document.createElement('span');
   titleEl.id = 'graph-view-title';
-  titleEl.style.cssText = 'font-family: var(--font-heading); font-size: var(--text-base); font-weight: var(--weight-semibold); flex: 1;';
+  titleEl.style.cssText = 'font-family: var(--font-heading); font-size: var(--text-sm); font-weight: var(--weight-semibold); white-space: nowrap;';
   titleEl.textContent = '🔮 Knowledge Graph';
   toolbar.appendChild(titleEl);
 
-  // Hint
+  // Spacer
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  toolbar.appendChild(spacer);
+
+  // Hint (short)
   const hintEl = document.createElement('span');
-  hintEl.style.cssText = 'font-size: var(--text-xs); color: var(--color-text-muted);';
-  hintEl.textContent = 'Click: select · Double-click: drill in · Scroll: zoom · Drag: move';
+  hintEl.style.cssText = 'font-size: 10px; color: var(--color-text-muted); white-space: nowrap;';
+  hintEl.textContent = 'Click: select · Dbl-click: drill · Scroll: zoom';
   toolbar.appendChild(hintEl);
 
-  // Exit button
+  // Exit button — prominent, always visible
   const exitBtn = document.createElement('button');
-  exitBtn.className = 'btn btn-ghost btn-sm';
-  exitBtn.style.cssText = 'display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0;';
-  exitBtn.innerHTML = '<span>✕</span><span>Exit Graph</span>';
+  exitBtn.className = 'btn btn-sm';
+  exitBtn.style.cssText = `
+    display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0;
+    background: var(--color-danger); color: #fff; border: none;
+    padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm);
+    font-size: var(--text-xs); font-weight: 600; cursor: pointer;
+  `;
+  exitBtn.innerHTML = '✕ Exit Graph';
   exitBtn.addEventListener('click', _closeGraphView);
   toolbar.appendChild(exitBtn);
 
   graphCol.appendChild(toolbar);
+
+  // ── Type filter toggles row ─────────────────────────────
+  const filterRow = document.createElement('div');
+  filterRow.id = 'graph-type-filters';
+  filterRow.style.cssText = `
+    display: flex; align-items: center; gap: var(--space-1-5);
+    padding: var(--space-1-5) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    z-index: 2;
+  `;
+  const filterLabel = document.createElement('span');
+  filterLabel.style.cssText = 'font-size: 10px; color: var(--color-text-muted); margin-right: var(--space-1);';
+  filterLabel.textContent = 'Filter:';
+  filterRow.appendChild(filterLabel);
+  // Filter chips are populated after graph builds (see _buildGraphTypeFilters)
+  graphCol.appendChild(filterRow);
 
   // ── Canvas ──────────────────────────────────────────────
   const canvasWrap = document.createElement('div');
@@ -1736,6 +1798,9 @@ async function _openGraphView(entityId) {
     mini: false,
     focusEntityId: entityId,
   });
+
+  // ── Populate type filter toggles ─────────────────────────
+  await _buildGraphTypeFilters();
 
   console.log('[entity-panel] [minor] Graph view opened for', entityId);
 }
@@ -1772,6 +1837,88 @@ function _closeGraphView() {
   closePanel();
 
   console.log('[entity-panel] [minor] Graph view closed.');
+}
+
+/**
+ * Build entity type filter toggle chips in the graph toolbar.
+ * Only types that actually have entities in the graph are shown.
+ * Each chip can be toggled on/off to show/hide that type.
+ */
+async function _buildGraphTypeFilters() {
+  const filterRow = document.getElementById('graph-type-filters');
+  if (!filterRow) return;
+
+  // Remove old chips (keep the "Filter:" label)
+  const existingChips = filterRow.querySelectorAll('.graph-filter-chip');
+  existingChips.forEach(c => c.remove());
+
+  // Gather all entity types that have entities in the DB
+  const allTypes = getAllEntityTypes();
+  const typesWithEntities = [];
+
+  for (const cfg of allTypes) {
+    if (!cfg.graphVisible) continue;
+    try {
+      const entities = await getEntitiesByType(cfg.key);
+      const nonDeleted = entities.filter(e => !e.deleted);
+      if (nonDeleted.length > 0) {
+        typesWithEntities.push(cfg);
+      }
+    } catch { /* skip */ }
+  }
+
+  // Initialize filters — all types ON
+  _graphTypeFilters = new Set(typesWithEntities.map(c => c.key));
+
+  for (const cfg of typesWithEntities) {
+    const chip = document.createElement('button');
+    chip.className = 'graph-filter-chip';
+    chip.dataset.typeKey = cfg.key;
+    chip.style.cssText = `
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px 8px; border-radius: 99px;
+      font-size: 10px; cursor: pointer;
+      border: 1.5px solid ${cfg.color};
+      background: ${cfg.color}22;
+      color: ${cfg.color};
+      font-weight: 600;
+      transition: all 0.15s ease;
+      line-height: 1.4;
+    `;
+    chip.textContent = `${cfg.icon} ${cfg.labelPlural || cfg.label}`;
+    chip.title = `Toggle ${cfg.labelPlural || cfg.label}`;
+
+    // Active state styling
+    const setActive = (active) => {
+      if (active) {
+        chip.style.background = cfg.color + '22';
+        chip.style.color = cfg.color;
+        chip.style.borderColor = cfg.color;
+        chip.style.opacity = '1';
+      } else {
+        chip.style.background = 'transparent';
+        chip.style.color = 'var(--color-text-muted)';
+        chip.style.borderColor = 'var(--color-border)';
+        chip.style.opacity = '0.5';
+      }
+    };
+    setActive(true);
+
+    chip.addEventListener('click', () => {
+      const isOn = _graphTypeFilters.has(cfg.key);
+      if (isOn) {
+        // Don't allow turning off the last type
+        if (_graphTypeFilters.size <= 1) return;
+        _graphTypeFilters.delete(cfg.key);
+      } else {
+        _graphTypeFilters.add(cfg.key);
+      }
+      setActive(!isOn);
+      setActiveTypes(new Set(_graphTypeFilters));
+    });
+
+    filterRow.appendChild(chip);
+  }
 }
 
 /**
@@ -1848,6 +1995,32 @@ async function _save() {
 // ════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════
+
+/**
+ * Navigate to the native view for an entity type, then open the entity panel.
+ * e.g. task → kanban, note → notes, event → calendar, idea → entity-type/idea
+ */
+function _navigateToEntityView(entity, config) {
+  if (!entity || !config) return;
+
+  // Close graph view if active
+  if (_graphViewActive) _closeGraphView();
+
+  const viewPath = TYPE_VIEW_MAP[entity.type];
+  if (!viewPath) return;
+
+  if (viewPath.startsWith('entity-type/')) {
+    const typeKey = viewPath.split('/')[1];
+    navigate(VIEW_KEYS.ENTITY_TYPE, { entityType: typeKey }, config.labelPlural || config.label);
+  } else {
+    navigate(viewPath);
+  }
+
+  // Re-open panel after a tick so the view renders first
+  setTimeout(() => {
+    openPanel(entity.id);
+  }, 100);
+}
 
 /** Get the title field key for a given entity type */
 function _getTitleKey(type) {
