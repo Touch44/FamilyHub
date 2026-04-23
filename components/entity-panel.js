@@ -119,6 +119,9 @@ export function initEntityPanel() {
   // Events/appointments with type set to a subtype value (e.g. 'Work', 'School')
   // instead of 'event'/'appointment' need repair.
   _repairCorruptedTypes();
+
+  // ── One-time migration: clean up stale daily-review edges and fix DR titles ──
+  _migrateDailyReviewEdges();
 }
 
 /**
@@ -169,6 +172,159 @@ async function _repairCorruptedTypes() {
   } catch (err) {
     console.warn('[entity-panel] Type repair scan failed:', err);
   }
+}
+
+/**
+ * One-time migration (runs every boot, idempotent):
+ *
+ * 1. Fix Daily Review entity titles: old format 'Daily Review — YYYY-MM-DD'
+ *    → new format 'Daily Review — MM-DD-YYYY'. Matched by .date field.
+ *
+ * 2. Delete ALL stale daily-review edges (relation = 'daily review' or 'contains'
+ *    where fromType or toType = 'dailyReview'). These were created by old code
+ *    that used wrong dates (createdAt instead of dueDate, etc.).
+ *    Fresh correct edges will be created on next panel open or daily view load.
+ *
+ * Non-blocking — errors are logged but never crash the app.
+ */
+async function _migrateDailyReviewEdges() {
+  try {
+    // ── Step 1: fix Daily Review entity titles ──────────────────────
+    const drEntities = await getEntitiesByType('dailyReview');
+    let titleFixed = 0;
+    for (const dr of drEntities) {
+      if (!dr.date || dr.deleted) continue;
+      const correctTitle = `Daily Review — ${_formatDateForTitle(dr.date)}`;
+      if (dr.title !== correctTitle) {
+        try {
+          await saveEntity({ ...dr, title: correctTitle });
+          titleFixed++;
+        } catch { /* skip */ }
+      }
+    }
+    if (titleFixed > 0) {
+      console.info(`[entity-panel] [migration] Fixed ${titleFixed} Daily Review titles to MM-DD-YYYY format.`);
+    }
+
+    // ── Step 2: delete stale daily-review edges ──────────────────────
+    // Get all entities to scan their edges
+    const allEntities = await getEntitiesByType('task')
+      .then(tasks => tasks.concat([])); // start with tasks then expand
+
+    // Collect all entity IDs that might have stale edges
+    const typesList = ['task', 'event', 'appointment', 'note', 'post', 'dateEntity',
+                       'mealPlan', 'trip', 'idea', 'research', 'book', 'dailyReview'];
+
+    let edgeDeleted = 0;
+    for (const typeName of typesList) {
+      try {
+        const entities = await getEntitiesByType(typeName);
+        for (const entity of entities) {
+          if (entity.deleted) continue;
+
+          // Get all outgoing edges with relation 'daily review' (old relation name)
+          const oldRelEdges = await getEdgesFrom(entity.id, 'daily review');
+          for (const edge of oldRelEdges) {
+            try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
+          }
+
+          // Get all outgoing edges with relation 'in daily review'
+          // and verify they point to the correct Daily Review for this entity type
+          const drEdges = await getEdgesFrom(entity.id, 'in daily review');
+          for (const edge of drEdges) {
+            try {
+              // Check the target is actually a dailyReview entity
+              const target = await getEntity(edge.toId);
+              if (!target || target.type !== 'dailyReview') {
+                await deleteEdge(edge.id);
+                edgeDeleted++;
+                continue;
+              }
+              // Verify this is the CORRECT date for this entity type
+              const correctDates = _getCorrectDatesForEntity(entity);
+              if (correctDates !== null && !correctDates.has(target.date)) {
+                // Wrong date — delete this edge (will be recreated correctly)
+                await deleteEdge(edge.id);
+                edgeDeleted++;
+              }
+            } catch { /* skip */ }
+          }
+        }
+      } catch { /* skip type */ }
+    }
+
+    // Also delete stale 'contains' edges FROM dailyReviews that point to
+    // entities that no longer belong to that date
+    for (const dr of drEntities) {
+      if (dr.deleted || !dr.date) continue;
+      try {
+        const containsEdges = await getEdgesFrom(dr.id, 'contains');
+        for (const edge of containsEdges) {
+          try {
+            const target = await getEntity(edge.toId);
+            if (!target || target.deleted) {
+              await deleteEdge(edge.id);
+              edgeDeleted++;
+            }
+            // Note: we only delete edges to deleted entities here.
+            // Valid edges are kept — _syncDailyReviewLinks handles the rest.
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+
+    if (edgeDeleted > 0) {
+      console.info(`[entity-panel] [migration] Deleted ${edgeDeleted} stale daily-review edges. Fresh edges will be created on next panel open.`);
+    }
+
+  } catch (err) {
+    console.warn('[entity-panel] [migration] _migrateDailyReviewEdges failed (non-fatal):', err);
+  }
+}
+
+/**
+ * Return the Set of correct YYYY-MM-DD dates for an entity's Daily Review links,
+ * or null if we can't determine (e.g. unknown type). Used by migration.
+ */
+function _getCorrectDatesForEntity(entity) {
+  const SKIP = new Set(['dailyReview','tag','note','budgetEntry','person','project',
+                        'contact','place','weblink','recipe','medication','shoppingItem','habit','goal']);
+  if (SKIP.has(entity.type)) return new Set(); // should have zero links
+
+  const dates = new Set();
+  switch (entity.type) {
+    case 'task':
+      if (entity.dueDate) { const d = _isoToLocalDate(entity.dueDate); if (d) dates.add(d); }
+      break;
+    case 'event': {
+      const startD = _isoToLocalDate(entity.date);
+      const endD   = _isoToLocalDate(entity.endDate);
+      if (startD) {
+        dates.add(startD);
+        if (endD && endD > startD) {
+          let cur = new Date(startD + 'T00:00:00');
+          const stop = new Date(endD + 'T00:00:00');
+          let safety = 0;
+          while (cur <= stop && safety++ < 90) {
+            const y = cur.getFullYear(), m = String(cur.getMonth()+1).padStart(2,'0'), dy = String(cur.getDate()).padStart(2,'0');
+            dates.add(`${y}-${m}-${dy}`);
+            cur.setDate(cur.getDate() + 1);
+          }
+        }
+      }
+      break;
+    }
+    case 'appointment': case 'dateEntity': case 'mealPlan':
+      if (entity.date) { const d = _isoToLocalDate(entity.date); if (d) dates.add(d); }
+      break;
+    case 'trip':
+      if (entity.startDate) { const d = _isoToLocalDate(entity.startDate); if (d) dates.add(d); }
+      break;
+    default:
+      if (entity.createdAt) { const d = _isoToLocalDate(entity.createdAt); if (d) dates.add(d); }
+      break;
+  }
+  return dates;
 }
 
 // ════════════════════════════════════════════════════════════

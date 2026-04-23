@@ -314,7 +314,7 @@ async function _buildGraph() {
     _nodes.push({
       id:    ent.id,
       type:  ent.type,
-      label: _getDisplayTitle(ent).slice(0, 24),
+      label: _getDisplayTitle(ent).slice(0, 32),
       icon:  cfg.icon,
       color: cfg.color,
       x:     prev ? prev.x : (w / 2) + (Math.random() - 0.5) * w * 0.6,
