@@ -10,7 +10,7 @@
  */
 
 import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
-         saveEdge, deleteEdge, getSetting, getEntitiesByType } from '../core/db.js';
+         saveEdge, deleteEdge, getSetting, setSetting, getEntitiesByType } from '../core/db.js';
 import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
@@ -84,6 +84,10 @@ export function initEntityPanel() {
       closePanel();
     }
   });
+
+  // Backdrop click closes panel
+  const backdrop = document.getElementById('entity-panel-backdrop');
+  if (backdrop) backdrop.addEventListener('click', closePanel);
 
   // Listen for open requests from anywhere
   on(EVENTS.PANEL_OPENED, ({ entityId, entityType } = {}) => {
@@ -203,57 +207,46 @@ async function _migrateDailyReviewEdges() {
       console.info(`[entity-panel] [migration] Fixed ${titleFixed} DR titles to MM-DD-YYYY.`);
     }
 
-    // ── Step 2: PURGE all daily-review edges unconditionally ─────────────
-    // We nuke every 'in daily review', 'daily review', and 'contains' edge
-    // that touches a dailyReview entity. Fresh, correct edges are recreated
-    // automatically when panels open or Daily view loads.
-    // This is the only reliable fix for stale edges from old code versions.
+    // ── Step 2: PURGE only stale OLD-relation-name edges (once only) ─────
+    // Only delete edges with OLD relation names ('in daily review', 'daily review').
+    // NEVER delete 'contains' edges — those are intentionally created by users
+    // and by _createAndLink / _syncDailyReviewLinks in the current version.
+    //
+    // Guard: skip if this migration has already run (stored in a DB setting).
+    const migDoneKey = 'migration_dr_edges_v2_done';
+    const alreadyMigrated = await getSetting(migDoneKey).catch(() => null);
+    if (alreadyMigrated) {
+      // Migration already ran — skip entirely
+    } else {
+      const allTypes = ['task','event','appointment','note','post','dateEntity',
+                        'mealPlan','trip','idea','research','book',
+                        'person','project','contact','place','weblink',
+                        'recipe','medication','shoppingItem','habit','goal','dailyReview'];
 
-    const allTypes = ['task','event','appointment','note','post','dateEntity',
-                      'mealPlan','trip','idea','research','book',
-                      'person','project','contact','place','weblink',
-                      'recipe','medication','shoppingItem','habit','goal','dailyReview'];
+      let edgeDeleted = 0;
 
-    let edgeDeleted = 0;
-
-    for (const typeName of allTypes) {
-      try {
-        const entities = await getEntitiesByType(typeName);
-        for (const entity of entities) {
-          if (entity.deleted) continue;
-
-          // Delete ALL outgoing daily-review edges (old and new relation names)
-          for (const rel of ['daily review', 'in daily review']) {
-            const edges = await getEdgesFrom(entity.id, rel);
-            for (const edge of edges) {
-              try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
+      for (const typeName of allTypes) {
+        try {
+          const entities = await getEntitiesByType(typeName);
+          for (const entity of entities) {
+            if (entity.deleted) continue;
+            // Only delete OLD relation-name edges (not 'contains')
+            for (const rel of ['daily review', 'in daily review']) {
+              const edges = await getEdgesFrom(entity.id, rel);
+              for (const edge of edges) {
+                try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
+              }
             }
           }
+        } catch { /* skip type */ }
+      }
 
-          // Delete ALL incoming 'contains' edges from dailyReview entities
-          const inEdges = await getEdgesTo(entity.id, 'contains');
-          for (const edge of inEdges) {
-            if (edge.fromType === 'dailyReview') {
-              try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
-            }
-          }
-        }
-      } catch { /* skip type */ }
-    }
+      // Mark migration as done so it never runs again
+      await setSetting(migDoneKey, true).catch(() => {});
 
-    // Also sweep contains edges FROM each dailyReview entity
-    for (const dr of drEntities) {
-      if (dr.deleted) continue;
-      try {
-        const containsEdges = await getEdgesFrom(dr.id, 'contains');
-        for (const edge of containsEdges) {
-          try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
-        }
-      } catch { /* skip */ }
-    }
-
-    if (edgeDeleted > 0) {
-      console.info(`[entity-panel] [migration] Purged ${edgeDeleted} stale daily-review edges. Fresh edges recreated on next panel open / daily view load.`);
+      if (edgeDeleted > 0) {
+        console.info(`[entity-panel] [migration] Purged ${edgeDeleted} stale old-relation-name DR edges.`);
+      }
     }
 
   } catch (err) {
@@ -349,18 +342,24 @@ export async function openPanel(entityId, entityTypeHint) {
 
     _entity    = entity;
     _config    = config;
-    _activeTab = 'properties';
+    // Content-first types default to 'content' view; others to 'properties'
+    _activeTab = CONTENT_FIRST_TYPES.has(entity.type) ? 'content' : 'properties';
     _dirty     = false;
 
     // Auto-link entity to its Daily Note(s) in background
     _ensureDailyLinks(entity).catch(() => {});
 
     _renderHeader();
-    _renderTabs();
     _renderActiveTab();
 
     _panel.classList.add('open');
     _panel.setAttribute('aria-hidden', 'false');
+
+    // Show backdrop only when NOT in graph-view mode
+    if (!_graphViewActive) {
+      const backdrop = document.getElementById('entity-panel-backdrop');
+      if (backdrop) backdrop.classList.add('visible');
+    }
 
   } catch (err) {
     console.error('[entity-panel] openPanel failed:', err);
@@ -382,6 +381,11 @@ export function closePanel() {
 
   _panel.classList.remove('open');
   _panel.setAttribute('aria-hidden', 'true');
+
+  // Hide backdrop
+  const backdrop = document.getElementById('entity-panel-backdrop');
+  if (backdrop) backdrop.classList.remove('visible');
+
   _entity = null;
   _config = null;
   _dirty  = false;
@@ -404,21 +408,13 @@ function _renderHeader() {
   const headerEl = document.getElementById('entity-panel-header');
   if (!headerEl) return;
   headerEl.innerHTML = '';
-  // All layout via inline styles — works regardless of which CSS version is cached
-  headerEl.style.display        = 'flex';
-  headerEl.style.flexDirection  = 'column';
-  headerEl.style.gap            = '8px';
-  headerEl.style.padding        = '12px 16px';
-  headerEl.style.borderBottom   = '1px solid var(--color-border)';
-  headerEl.style.flexShrink     = '0';
+  headerEl.style.cssText = '';  // Let CSS classes control layout
 
-  // ── Row 1: type badge · saving indicator · actions · close ──
+  // ── Row 1: type badge · saving indicator · icon toolbar · close ──
   const topRow = document.createElement('div');
-  topRow.style.display    = 'flex';
-  topRow.style.alignItems = 'center';
-  topRow.style.gap        = '8px';
-  topRow.style.width      = '100%';
+  topRow.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;';
 
+  // Type badge (click → navigate to entity's native view)
   const badge = document.createElement('span');
   badge.id = 'entity-panel-type-badge';
   badge.className = 'type-badge';
@@ -431,6 +427,7 @@ function _renderHeader() {
   topRow.appendChild(badge);
   _panelTypeBadge = badge;
 
+  // Saving indicator
   const savingInd = document.createElement('span');
   savingInd.id = 'panel-saving-indicator';
   savingInd.className = 'panel-saving-indicator hidden';
@@ -439,32 +436,65 @@ function _renderHeader() {
   topRow.appendChild(savingInd);
   _savingIndicator = savingInd;
 
+  // ── Icon toolbar (right-aligned) ─────────────────────────
+  const toolbar = document.createElement('div');
+  toolbar.style.cssText = 'display:flex;align-items:center;gap:2px;margin-left:auto;';
+
+  // Action buttons (complete, duplicate, archive, add-to-project, convert, delete)
   const actionsDiv = document.createElement('div');
   actionsDiv.id = 'entity-panel-header-actions';
-  actionsDiv.style.display    = 'flex';
-  actionsDiv.style.gap        = '4px';
-  actionsDiv.style.alignItems = 'center';
-  actionsDiv.style.marginLeft = 'auto';
-  topRow.appendChild(actionsDiv);
+  actionsDiv.style.cssText = 'display:flex;gap:2px;align-items:center;';
+  toolbar.appendChild(actionsDiv);
   _headerActions = actionsDiv;
 
+  // Separator
+  const sep1 = document.createElement('div');
+  sep1.className = 'panel-icon-btn-sep';
+  toolbar.appendChild(sep1);
+
+  // View icon buttons: only show 'content' if entity has a content field
+  const hasContent = _getContentField(_entity, _config) !== null;
+  const visibleViews = VIEW_DEFS.filter(v => v.key !== 'content' || hasContent);
+
+  for (const view of visibleViews) {
+    const btn = document.createElement('button');
+    btn.className = 'panel-icon-btn' + (_activeTab === view.key ? ' active' : '');
+    btn.title = view.title;
+    btn.setAttribute('aria-label', view.title);
+    btn.setAttribute('data-view', view.key);
+    btn.textContent = view.icon;
+    btn.addEventListener('click', () => {
+      _activeTab = view.key;
+      // Update all icon button active states
+      toolbar.querySelectorAll('.panel-icon-btn[data-view]').forEach(b => {
+        b.classList.toggle('active', b.dataset.view === view.key);
+      });
+      _renderActiveTab();
+    });
+    toolbar.appendChild(btn);
+  }
+
+  // Separator before close
+  const sep2 = document.createElement('div');
+  sep2.className = 'panel-icon-btn-sep';
+  toolbar.appendChild(sep2);
+
+  // Close button
   const closeBtn = document.createElement('button');
   closeBtn.id = 'entity-panel-close';
+  closeBtn.className = 'panel-icon-btn';
   closeBtn.setAttribute('aria-label', 'Close entity panel');
-  closeBtn.textContent = '✕';
-  closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:1rem;padding:4px;border-radius:4px;line-height:1;flex-shrink:0;';
+  closeBtn.innerHTML = '✕';
   closeBtn.addEventListener('click', closePanel);
-  topRow.appendChild(closeBtn);
+  toolbar.appendChild(closeBtn);
   _panelClose = closeBtn;
 
+  topRow.appendChild(toolbar);
   headerEl.appendChild(topRow);
 
-  // ── Row 2: entity title — full width on its own line ───────
+  // ── Row 2: entity title ──────────────────────────────────
   const titleRow = document.createElement('div');
-  titleRow.style.display    = 'flex';
-  titleRow.style.alignItems = 'center';
-  titleRow.style.width      = '100%';
-  titleRow.style.minHeight  = '32px';
+  titleRow.style.cssText = 'display:flex;align-items:flex-start;width:100%;';
 
   const titleField = _config.fields.find(f => f.isTitle);
   const titleVal   = _getDisplayTitle(_entity);
@@ -473,14 +503,14 @@ function _renderHeader() {
   titleSpan.id = 'entity-panel-title';
   titleSpan.textContent = titleVal;
   titleSpan.title = 'Click to edit title';
-  titleSpan.style.cssText = 'font-family:var(--font-heading,Georgia,serif);font-size:1.3125rem;font-weight:700;color:var(--color-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;line-height:1.3;';
-  titleSpan.addEventListener('click', () => _makeTitleEditable(titleField));
+  titleSpan.style.cssText = 'font-family:var(--font-heading,Georgia,serif);font-size:var(--text-2xl,1.5rem);font-weight:700;color:var(--color-text);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;line-height:1.25;';
+  if (titleField) titleSpan.addEventListener('click', () => _makeTitleEditable(titleField));
   titleRow.appendChild(titleSpan);
   _panelTitle = titleSpan;
 
   headerEl.appendChild(titleRow);
 
-  // ── Populate action buttons ────────────────────────────────
+  // ── Populate action buttons ──────────────────────────────
   _renderHeaderActions();
 }
 function _makeTitleEditable(titleField) {
@@ -529,15 +559,21 @@ function _renderHeaderActions() {
 
   _headerActions.innerHTML = '';
   const actions = _config.actions || [];
-  const btnStyle = 'font-size: var(--text-xs); padding: 2px var(--space-2); min-width: 0;';
+
+  const mkBtn = (icon, title, danger = false) => {
+    const btn = document.createElement('button');
+    btn.className = 'panel-icon-btn';
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+    btn.textContent = icon;
+    if (danger) btn.style.color = 'var(--color-danger)';
+    return btn;
+  };
 
   // Complete (tasks only)
   if (_entity.type === 'task' && _entity.status !== 'Done') {
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-primary btn-xs';
-    btn.textContent = '✓';
-    btn.title       = 'Mark complete';
-    btn.style.cssText = btnStyle;
+    const btn = mkBtn('✓', 'Mark complete');
+    btn.style.color = 'var(--color-success-text, #16a34a)';
     btn.addEventListener('click', async () => {
       _entity.status = 'Done';
       await _save();
@@ -549,11 +585,7 @@ function _renderHeaderActions() {
 
   // Duplicate
   if (actions.includes('duplicate')) {
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-ghost btn-xs';
-    btn.textContent = '⧉';
-    btn.title       = 'Duplicate';
-    btn.style.cssText = btnStyle;
+    const btn = mkBtn('⧉', 'Duplicate');
     btn.addEventListener('click', async () => {
       const dup = { ..._entity };
       delete dup.id;
@@ -570,11 +602,7 @@ function _renderHeaderActions() {
   // Archive
   if (actions.includes('archive') || actions.includes('edit')) {
     const isArchived = _entity.status === 'Archived' || _entity.archived;
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-ghost btn-xs';
-    btn.textContent = isArchived ? '📂' : '📦';
-    btn.title       = isArchived ? 'Unarchive' : 'Archive';
-    btn.style.cssText = btnStyle;
+    const btn = mkBtn(isArchived ? '📂' : '📦', isArchived ? 'Unarchive' : 'Archive');
     btn.addEventListener('click', async () => {
       if (_entity.status !== undefined) {
         _entity.status = isArchived ? 'Active' : 'Archived';
@@ -590,40 +618,22 @@ function _renderHeaderActions() {
 
   // Add to Project
   if (_entity.type !== 'project') {
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-ghost btn-xs';
-    btn.textContent = '📁';
-    btn.title       = 'Add to project';
-    btn.style.cssText = btnStyle;
-    btn.addEventListener('click', () => {
-      _showProjectPicker();
-    });
+    const btn = mkBtn('📁', 'Add to project');
+    btn.addEventListener('click', () => _showProjectPicker());
     _headerActions.appendChild(btn);
   }
 
   // Convert
   if (actions.includes('convert')) {
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-ghost btn-xs';
-    btn.textContent = '↺';
-    btn.title       = 'Convert to…';
-    btn.style.cssText = btnStyle;
-    btn.addEventListener('click', () => {
-      _showConvertDropdown();
-    });
+    const btn = mkBtn('↺', 'Convert to…');
+    btn.addEventListener('click', () => _showConvertDropdown());
     _headerActions.appendChild(btn);
   }
 
   // Delete
   if (actions.includes('delete')) {
-    const btn = document.createElement('button');
-    btn.className   = 'btn btn-ghost btn-xs';
-    btn.textContent = '🗑';
-    btn.title       = 'Delete';
-    btn.style.cssText = btnStyle + ' color: var(--color-danger);';
-    btn.addEventListener('click', () => {
-      _confirmDelete();
-    });
+    const btn = mkBtn('🗑', 'Delete', true);
+    btn.addEventListener('click', () => _confirmDelete());
     _headerActions.appendChild(btn);
   }
 }
@@ -748,55 +758,162 @@ function _showConvertDropdown() {
 // TABS
 // ════════════════════════════════════════════════════════════
 
-const TAB_DEFS = [
-  { key: 'properties', label: 'Properties' },
-  { key: 'relations',  label: 'Relations' },
-  { key: 'activity',   label: 'Activity' },
-  { key: 'graph',      label: 'Graph' },
+// ── Content-first entity types ────────────────────────────── //
+// These types open in 'content' view by default (body/richtext prominent).
+// All others open in 'properties' view.
+const CONTENT_FIRST_TYPES = new Set([
+  'note', 'idea', 'research', 'book', 'document', 'weblink',
+  'trip', 'goal', 'habit', 'recipe', 'post',
+]);
+
+// ── View definitions (icon toolbar) ──────────────────────── //
+const VIEW_DEFS = [
+  { key: 'content',    icon: '📄', title: 'Content' },
+  { key: 'properties', icon: '⚙️', title: 'Properties' },
+  { key: 'relations',  icon: '🔗', title: 'Relations' },
+  { key: 'activity',   icon: '📋', title: 'Activity' },
+  { key: 'graph',      icon: '✦',  title: 'Graph' },
 ];
 
-function _renderTabs() {
-  // Find or create tab bar
-  let tabBar = _panelBody.querySelector('.panel-tabs');
-  if (!tabBar) {
-    _panelBody.innerHTML = '';
-    tabBar = document.createElement('div');
-    tabBar.className = 'tabs panel-tabs';
-    _panelBody.appendChild(tabBar);
+// ════════════════════════════════════════════════════════════
+// VIEW RENDERING (no tab bar — views driven by icon toolbar)
+// ════════════════════════════════════════════════════════════
 
-    // Content container
-    const content = document.createElement('div');
-    content.className = 'panel-tab-content';
-    content.style.cssText = 'flex: 1; overflow-y: auto; padding: var(--space-4) 0 var(--space-8);';
-    _panelBody.appendChild(content);
-  }
-
-  tabBar.innerHTML = '';
-  for (const t of TAB_DEFS) {
-    const btn = document.createElement('button');
-    btn.className   = 'tab' + (t.key === _activeTab ? ' active' : '');
-    btn.textContent = t.label;
-    btn.dataset.tab = t.key;
-    btn.addEventListener('click', () => {
-      _activeTab = t.key;
-      _renderTabs();
-      _renderActiveTab();
-    });
-    tabBar.appendChild(btn);
-  }
+/**
+ * Get the primary content/richtext field for an entity, or null.
+ * Used to decide whether to show the Content view icon and whether
+ * to render content-first.
+ */
+function _getContentField(entity, config) {
+  if (!entity || !config) return null;
+  // Find the first richtext field that is NOT the title
+  const field = config.fields.find(f => f.type === 'richtext' && !f.isTitle);
+  if (!field) return null;
+  return field;
 }
 
 function _renderActiveTab() {
-  const container = _panelBody.querySelector('.panel-tab-content');
-  if (!container) return;
+  if (!_panelBody) return;
+  _panelBody.innerHTML = '';
 
-  container.innerHTML = '';
+  const container = document.createElement('div');
+  container.className = 'panel-view-container';
+  container.style.cssText = 'padding: var(--space-5) var(--space-6); min-height: 200px;';
+  _panelBody.appendChild(container);
 
   switch (_activeTab) {
-    case 'properties': _renderPropertiesTab(container); break;
-    case 'relations':  _renderRelationsTab(container);  break;
-    case 'activity':   _renderActivityTab(container);   break;
-    case 'graph':      _renderGraphTab(container);      break;
+    case 'content':    _renderContentView(container);    break;
+    case 'properties': _renderPropertiesTab(container);  break;
+    case 'relations':  _renderRelationsTab(container);   break;
+    case 'activity':   _renderActivityTab(container);    break;
+    case 'graph':      _renderGraphTab(container);       break;
+    default:           _renderPropertiesTab(container);  break;
+  }
+}
+
+/**
+ * Content view — renders the primary richtext/body field prominently,
+ * plus all non-title non-richtext fields as a compact property strip below.
+ */
+function _renderContentView(container) {
+  if (!_entity || !_config) return;
+
+  const contentField = _getContentField(_entity, _config);
+  if (!contentField) {
+    // Fallback: show properties if no content field
+    _renderPropertiesTab(container);
+    return;
+  }
+
+  // ── Content editor ───────────────────────────────────────
+  const editorWrap = document.createElement('div');
+  editorWrap.style.cssText = 'margin-bottom: var(--space-6);';
+
+  const value = _entity[contentField.key];
+
+  const editor = document.createElement('div');
+  editor.contentEditable = 'true';
+  editor.setAttribute('role', 'textbox');
+  editor.setAttribute('aria-multiline', 'true');
+  editor.setAttribute('aria-label', contentField.label);
+  editor.setAttribute('data-placeholder', `Start writing ${contentField.label.toLowerCase()}…`);
+  editor.style.cssText = `
+    min-height: 220px;
+    font-size: var(--text-sm);
+    line-height: 1.75;
+    color: var(--color-text);
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+  `;
+  editor.innerHTML = value || '';
+
+  editor.className = 'panel-content-editor';
+
+  // Inject placeholder style once — guard against duplicates
+  if (!document.getElementById('panel-content-editor-style')) {
+    const editorStyle = document.createElement('style');
+    editorStyle.id = 'panel-content-editor-style';
+    editorStyle.textContent = `
+      .panel-content-editor:empty:before {
+        content: attr(data-placeholder);
+        color: var(--color-text-muted);
+        pointer-events: none;
+      }
+    `;
+    document.head.appendChild(editorStyle);
+  }
+
+  let _saveDebounce = null;
+  const schedSave = () => {
+    clearTimeout(_saveDebounce);
+    _saveDebounce = setTimeout(async () => {
+      _entity[contentField.key] = editor.innerHTML;
+      await _save();
+    }, 800);
+  };
+  editor.addEventListener('input', schedSave);
+  editor.addEventListener('blur', async () => {
+    clearTimeout(_saveDebounce);
+    _entity[contentField.key] = editor.innerHTML;
+    await _save();
+  });
+
+  editorWrap.appendChild(editor);
+  container.appendChild(editorWrap);
+
+  // ── Compact property strip (non-title fields, excluding the content field itself) ──
+  const otherFields = _config.fields.filter(f =>
+    !f.isTitle && f.key !== contentField.key
+  );
+
+  if (otherFields.length > 0) {
+    const strip = document.createElement('div');
+    strip.style.cssText = `
+      border-top: 1px solid var(--color-border);
+      padding-top: var(--space-4);
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    `;
+
+    for (const field of otherFields) {
+      const row = _createFieldRow(field);
+      strip.appendChild(row);
+    }
+
+    // Metadata
+    const meta = document.createElement('div');
+    meta.style.cssText = 'margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--color-border);';
+    meta.innerHTML = `
+      <div style="font-size: var(--text-xs); color: var(--color-text-muted); display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Created: ${_formatTimestamp(_entity.createdAt)}</span>
+        <span>Updated: ${_formatTimestamp(_entity.updatedAt)}</span>
+        <span style="opacity:0.5;">ID: ${_entity.id}</span>
+      </div>
+    `;
+    strip.appendChild(meta);
+    container.appendChild(strip);
   }
 }
 
@@ -1844,12 +1961,26 @@ async function _renderRelationsTab(container) {
     _searchDebounce = setTimeout(() => renderSearchResults(searchInput.value), 120);
   });
 
-  // Close results on click outside
-  document.addEventListener('click', function closeResults(e) {
+  // Close results on click outside — store ref so we can remove it
+  const _closeResultsOnOutsideClick = (e) => {
     if (!searchWrap.contains(e.target)) {
       resultsList.style.display = 'none';
     }
+  };
+  document.addEventListener('click', _closeResultsOnOutsideClick);
+
+  // Clean up when the panel body is replaced (next tab switch or close)
+  const _cleanupRelationsTab = () => {
+    document.removeEventListener('click', _closeResultsOnOutsideClick);
+  };
+  // Use a MutationObserver to detect when searchWrap is removed from DOM
+  const _relObserver = new MutationObserver(() => {
+    if (!document.contains(searchWrap)) {
+      _cleanupRelationsTab();
+      _relObserver.disconnect();
+    }
   });
+  _relObserver.observe(document.body, { childList: true, subtree: true });
 
   // ── Existing connections list ──────────────────────────────
   const connHeader = document.createElement('div');
@@ -2401,7 +2532,13 @@ async function _openGraphView(entityId) {
   viewEl.appendChild(graphCol);
 
   // ── Ensure entity panel is open ─────────────────────────
+  // In graph mode the panel is a side column, NOT the modal — hide backdrop
+  const backdrop = document.getElementById('entity-panel-backdrop');
+  if (backdrop) backdrop.classList.remove('visible');
+
   _graphViewActive = true;
+  // Mark panel as graph-mode so CSS overrides it from modal → side panel
+  if (_panel) _panel.classList.add('graph-mode');
   await openPanel(entityId);
 
   // ── Force panel to properties tab in graph mode ─────────
@@ -2429,6 +2566,9 @@ async function _openGraphView(entityId) {
 function _closeGraphView() {
   destroyGraph();
   _graphViewActive = false;
+
+  // Remove graph-mode panel class so it returns to modal behavior
+  if (_panel) _panel.classList.remove('graph-mode');
 
   const main   = document.getElementById('main');
   const viewEl = document.getElementById('view-graph');

@@ -491,40 +491,58 @@ const ADD_ENTITY_TYPES = [
 ];
 
 /**
- * Load note entities connected to the Daily Review for this date via
- * the graph edge (drId → note, relation='contains').
- * Returns an array of note entity objects.
+ * Load ALL entities connected to the Daily Review for this date via
+ * the graph edge (drId → entity, relation='contains').
+ * Returns an array of entity objects (any type).
  */
-async function _loadDRLinkedNotes(dateStr) {
+async function _loadDRLinkedEntities(dateStr) {
   try {
     const dr = await _getOrCreateDailyReview(dateStr);
     if (!dr) return [];
     const edges = await getEdgesFrom(dr.id, 'contains');
-    const noteEdges = edges.filter(e => e.toType === 'note');
-    if (!noteEdges.length) return [];
-    // Resolve each edge to its entity
+    if (!edges.length) return [];
     const resolved = await Promise.all(
-      noteEdges.map(e => getEntity(e.toId).catch(() => null))
+      edges.map(e => getEntity(e.toId).catch(() => null))
     );
-    return resolved.filter(n => n && !n.deleted && n.category !== 'Comment');
+    return resolved.filter(n => n && !n.deleted);
   } catch (err) {
-    console.warn('[daily] _loadDRLinkedNotes failed:', err);
+    console.warn('[daily] _loadDRLinkedEntities failed:', err);
     return [];
   }
 }
 
 /**
  * Create an entity via FAB, then connect it to the Daily Review once saved.
- * Listens for the ENTITY_SAVED event once and links the new entity.
+ * Listens for the next ENTITY_SAVED of matching type created AFTER this call.
+ * The listener is self-cancelling after 5 minutes to avoid leaks if form is dismissed.
  */
 async function _createAndLink(entityType, dateStr, prefill = {}) {
   // Get/create DR first so the ID is ready when the entity saves
   const dr = await _getOrCreateDailyReview(dateStr);
+  if (!dr) {
+    // DR creation failed — just open the form anyway without linking
+    emit(EVENTS.FAB_CREATE, { entityType, prefill });
+    return;
+  }
 
-  // Listen for the next entity:saved of this type then link it (one-shot)
+  // Record timestamp BEFORE opening FAB so we only catch the entity created NOW
+  const listenFrom = Date.now();
+
+  // Leak-prevention: auto-cancel listener after 5 minutes
+  let cancelTimer = setTimeout(() => {
+    unsub();
+  }, 5 * 60 * 1000);
+
   const unsub = on(EVENTS.ENTITY_SAVED, async ({ entity }) => {
+    // Must match type AND be newly created (createdAt after we opened the form)
     if (entity?.type !== entityType) return;
-    unsub(); // detach immediately
+    const entityTime = entity.createdAt ? new Date(entity.createdAt).getTime() : 0;
+    if (entityTime < listenFrom - 1000) return; // not the one we're waiting for
+
+    // It's ours — detach and cancel timer
+    unsub();
+    clearTimeout(cancelTimer);
+
     try {
       await saveEdge({
         fromId:   dr.id,
@@ -732,31 +750,48 @@ function _renderEmpty(body, message) {
 // ── Section renderers ─────────────────────────────────────── //
 
 /**
- * Section 1: Daily Notes — note entities connected to this date's Daily Review entity.
- * Created via the "+ Add → Note" selector; each note is linked via a 'contains' edge.
+ * Section 1: Linked Today — ALL entities connected to this date's Daily Review entity.
+ * Created via the "+ Add" selector; each entity is linked via a 'contains' edge.
  */
 async function _renderDailyNotes(container, dateStr) {
-  const notes = await _loadDRLinkedNotes(dateStr);
-  const { wrapper, body } = _buildSection('notes', '📝', 'Notes', notes.length || null);
+  const entities = await _loadDRLinkedEntities(dateStr);
+  const { wrapper, body } = _buildSection('notes', '📝', 'Linked Today', entities.length || null);
   container.appendChild(wrapper);
 
-  if (!notes.length) {
-    _renderEmpty(body, 'No notes for this day yet — use "+ Add → Note" to create one.');
+  if (!entities.length) {
+    _renderEmpty(body, 'Nothing linked to this day yet — use "+ Add" to connect entities.');
     return;
   }
 
   const list = document.createElement('div');
   list.className = 'daily-notes-list';
 
-  for (const note of notes) {
-    const preview = _stripHtml(note.body || '').slice(0, 80);
+  // Group by entity type for a cleaner display
+  const TYPE_ICONS = {
+    note: '📝', task: '✅', event: '📅', appointment: '🔔', budgetEntry: '💰',
+    mealPlan: '🍽️', shoppingItem: '🛒', habit: '🔄', goal: '🎯', idea: '💡',
+    research: '🔬', book: '📚', trip: '✈️', place: '📍', weblink: '🔗',
+    medication: '💊', recipe: '🥗', contact: '🧑‍💼', document: '📄', project: '📁',
+  };
+
+  for (const entity of entities) {
+    const icon = TYPE_ICONS[entity.type] || '📎';
+    const title = entity.title || entity.name || entity.label || 'Untitled';
+    const preview = entity.body
+      ? _stripHtml(entity.body).slice(0, 60)
+      : (entity.description || entity.goal || entity.details || '');
+
     const row = document.createElement('div');
     row.className = 'daily-note-row';
+    row.style.cssText = 'display:flex;align-items:flex-start;gap:var(--space-2);';
     row.innerHTML = `
-      <span class="daily-note-row-title">${_esc(note.title || 'Untitled')}</span>
-      ${preview ? `<span class="daily-note-row-preview">${_esc(preview)}${preview.length >= 80 ? '…' : ''}</span>` : ''}
+      <span style="font-size:1.1rem;flex-shrink:0;padding-top:1px;">${icon}</span>
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-0-5);">
+        <span class="daily-note-row-title">${_esc(title)}</span>
+        ${preview ? `<span class="daily-note-row-preview">${_esc(preview)}${preview.length >= 60 ? '…' : ''}</span>` : ''}
+      </div>
     `;
-    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'note', entityId: note.id }));
+    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: entity.type, entityId: entity.id }));
     list.appendChild(row);
   }
 

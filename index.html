@@ -492,8 +492,11 @@
      Outside #app so they sit above all layout layers.
      ══════════════════════════════════════════════════════════ -->
 
-<!-- ── Entity Panel (Blueprint §9.2 — fixed right overlay) ── -->
-<aside id="entity-panel" role="complementary" aria-label="Entity details"
+<!-- ── Entity Panel Backdrop ── -->
+<div id="entity-panel-backdrop" aria-hidden="true"></div>
+
+<!-- ── Entity Panel (centered modal) ── -->
+<aside id="entity-panel" role="dialog" aria-modal="true" aria-label="Entity details"
        aria-hidden="true">
   <div id="entity-panel-header">
     <!-- Built dynamically by components/entity-panel.js _renderHeader() -->
