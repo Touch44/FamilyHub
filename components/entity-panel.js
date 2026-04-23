@@ -215,6 +215,9 @@ export async function openPanel(entityId, entityTypeHint) {
     _activeTab = 'properties';
     _dirty     = false;
 
+    // Auto-link entity to its Daily Note(s) in background
+    _ensureDailyLinks(entity).catch(() => {});
+
     _renderHeader();
     _renderTabs();
     _renderActiveTab();
@@ -1373,10 +1376,344 @@ async function _showRelationPicker(wrap, field) {
 // RELATIONS TAB
 // ════════════════════════════════════════════════════════════
 
+// ── Daily-link system ─────────────────────────────────────────
+// Entities with createdAt or dueDate are auto-linked to the Daily Note
+// entity for those dates. Called whenever a panel opens.
+
+/**
+ * Find or create the Daily Note entity for a given date string.
+ * Daily Notes are note entities with category:'Daily' and dailyDate:'YYYY-MM-DD'.
+ * @param {string} dateStr  — 'YYYY-MM-DD'
+ * @returns {Promise<object>} the daily note entity
+ */
+async function _getOrCreateDailyNote(dateStr) {
+  if (!dateStr) return null;
+  try {
+    const notes = await getEntitiesByType('note');
+    const existing = notes.find(n => n.dailyDate === dateStr && !n.deleted);
+    if (existing) return existing;
+    // Create it
+    const now = new Date().toISOString();
+    return await saveEntity({
+      type:      'note',
+      title:     `Daily Note — ${dateStr}`,
+      body:      '',
+      category:  'Daily',
+      dailyDate: dateStr,
+      createdAt: now,
+    });
+  } catch (err) {
+    console.warn('[entity-panel] _getOrCreateDailyNote failed:', dateStr, err);
+    return null;
+  }
+}
+
+/**
+ * Ensure the entity is linked to Daily Note entities for its createdAt
+ * and/or dueDate. Idempotent — won't create duplicate edges.
+ * Only runs for entity types that have temporal relevance.
+ * @param {object} entity
+ */
+async function _ensureDailyLinks(entity) {
+  if (!entity?.id || !entity?.type) return;
+
+  // Types that should NOT auto-link (Daily Notes themselves, tags, settings-like)
+  const SKIP_TYPES = new Set(['note', 'tag', 'budgetEntry', 'mealPlan', 'shoppingItem']);
+  if (SKIP_TYPES.has(entity.type)) return;
+
+  // Collect dates to link
+  const datesToLink = new Set();
+
+  // 1. createdAt date
+  if (entity.createdAt) {
+    const d = _isoToLocalDate(entity.createdAt);
+    if (d) datesToLink.add(d);
+  }
+
+  // 2. dueDate (tasks, etc.)
+  if (entity.dueDate) {
+    const d = _isoToLocalDate(entity.dueDate);
+    if (d) datesToLink.add(d);
+  }
+
+  // 3. date field (events, appointments, dateEntity, mealPlan)
+  if (entity.date) {
+    const d = _isoToLocalDate(entity.date);
+    if (d) datesToLink.add(d);
+  }
+
+  // 4. startDate (trips)
+  if (entity.startDate) {
+    const d = _isoToLocalDate(entity.startDate);
+    if (d) datesToLink.add(d);
+  }
+
+  if (datesToLink.size === 0) return;
+
+  // Get existing edges from this entity to avoid duplicates
+  const existingEdges = await getEdgesFrom(entity.id, 'daily review');
+  const linkedDailyIds = new Set(existingEdges.map(e => e.toId));
+
+  for (const dateStr of datesToLink) {
+    try {
+      const dailyNote = await _getOrCreateDailyNote(dateStr);
+      if (!dailyNote) continue;
+      if (linkedDailyIds.has(dailyNote.id)) continue; // already linked
+
+      await saveEdge({
+        fromId:   entity.id,
+        fromType: entity.type,
+        toId:     dailyNote.id,
+        toType:   'note',
+        relation: 'daily review',
+      });
+    } catch (err) {
+      console.warn('[entity-panel] _ensureDailyLinks failed for date:', dateStr, err);
+    }
+  }
+}
+
+/** Parse ISO string or date-only string to local YYYY-MM-DD */
+function _isoToLocalDate(isoStr) {
+  if (!isoStr) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoStr)) return isoStr;
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dy}`;
+}
+
+// ── Relations Tab — comprehensive connection system ───────────
+
 async function _renderRelationsTab(container) {
   if (!_entity) return;
 
-  container.innerHTML = '<div style="font-size: var(--text-xs); color: var(--color-text-muted); padding: var(--space-2);">Loading relations…</div>';
+  container.innerHTML = '';
+
+  // Run daily linking silently in background
+  _ensureDailyLinks(_entity).catch(() => {});
+
+  // ── Section: Add New Connection ────────────────────────────
+  const addSection = document.createElement('div');
+  addSection.style.cssText = 'border-bottom: 1px solid var(--color-border); padding-bottom: var(--space-4); margin-bottom: var(--space-4);';
+  container.appendChild(addSection);
+
+  const addHeader = document.createElement('div');
+  addHeader.style.cssText = 'font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--space-2);';
+  addHeader.textContent = '＋ Add Connection';
+  addSection.appendChild(addHeader);
+
+  // Relation type selector + search bar row
+  const addRow = document.createElement('div');
+  addRow.style.cssText = 'display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;';
+  addSection.appendChild(addRow);
+
+  // Relation label input
+  const relationInput = document.createElement('input');
+  relationInput.type = 'text';
+  relationInput.className = 'input';
+  relationInput.placeholder = 'Relation label (e.g. "related to")';
+  relationInput.value = 'related to';
+  relationInput.style.cssText = 'width: 160px; font-size: var(--text-xs); padding: var(--space-1-5) var(--space-2);';
+  addRow.appendChild(relationInput);
+
+  // Quick relation presets
+  const presets = ['related to', 'part of', 'blocked by', 'assigned to', 'daily review', 'belongs to', 'see also'];
+  const presetRow = document.createElement('div');
+  presetRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1-5);';
+  for (const p of presets) {
+    const chip = document.createElement('button');
+    chip.textContent = p;
+    chip.style.cssText = `
+      font-size: 10px; padding: 2px 8px; border-radius: 99px;
+      border: 1px solid var(--color-border); background: var(--color-surface);
+      color: var(--color-text-muted); cursor: pointer;
+      transition: all 0.12s ease;
+    `;
+    chip.addEventListener('click', () => {
+      relationInput.value = p;
+      chip.style.background = 'var(--color-accent)';
+      chip.style.color = '#fff';
+      chip.style.borderColor = 'var(--color-accent)';
+      // Reset siblings
+      presetRow.querySelectorAll('button').forEach(b => {
+        if (b !== chip) { b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; }
+      });
+    });
+    presetRow.appendChild(chip);
+  }
+  addSection.appendChild(presetRow);
+
+  // ── Live search box ───────────────────────────────────────
+  const searchWrap = document.createElement('div');
+  searchWrap.style.cssText = 'position: relative; margin-top: var(--space-2);';
+  addSection.appendChild(searchWrap);
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'input';
+  searchInput.placeholder = '🔍 Search all entities — type to filter…';
+  searchInput.setAttribute('aria-label', 'Search entities to link');
+  searchInput.style.cssText = 'width: 100%; font-size: var(--text-sm); padding: var(--space-2) var(--space-3);';
+  searchWrap.appendChild(searchInput);
+
+  const resultsList = document.createElement('div');
+  resultsList.style.cssText = `
+    display: none;
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-panel);
+    max-height: 320px; overflow-y: auto;
+    margin-top: 2px;
+  `;
+  searchWrap.appendChild(resultsList);
+
+  // Load ALL entities sorted by updatedAt desc (most recent first)
+  let _allEntities = [];
+  let _searchDebounce = null;
+
+  const loadAllEntities = async () => {
+    try {
+      const allTypes = getAllEntityTypes();
+      const arrays = await Promise.all(allTypes.map(t => getEntitiesByType(t.key).catch(() => [])));
+      _allEntities = arrays.flat()
+        .filter(e => !e.deleted && e.id !== _entity.id)
+        .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
+    } catch (err) {
+      console.warn('[entity-panel] loadAllEntities failed:', err);
+    }
+  };
+
+  await loadAllEntities();
+
+  // Get set of already-linked entity IDs
+  const getLinkedIds = async () => {
+    const [out, inc] = await Promise.all([
+      getEdgesFrom(_entity.id),
+      getEdgesTo(_entity.id),
+    ]);
+    return new Set([...out.map(e => e.toId), ...inc.map(e => e.fromId)]);
+  };
+
+  let _linkedIds = await getLinkedIds();
+
+  const renderSearchResults = (query) => {
+    resultsList.innerHTML = '';
+    const q = query.trim().toLowerCase();
+
+    let candidates = _allEntities;
+    if (q) {
+      candidates = _allEntities.filter(e => {
+        const title = _getDisplayTitle(e).toLowerCase();
+        const type  = (e.type || '').toLowerCase();
+        return title.includes(q) || type.includes(q);
+      });
+    }
+
+    // Cap at 40 results
+    const results = candidates.slice(0, 40);
+
+    if (results.length === 0) {
+      resultsList.innerHTML = `<div style="padding: var(--space-3); font-size: var(--text-xs); color: var(--color-text-muted); text-align: center;">No entities found${q ? ` matching "${q}"` : ''}</div>`;
+      resultsList.style.display = 'block';
+      return;
+    }
+
+    for (const ent of results) {
+      const cfg      = getEntityTypeConfig(ent.type);
+      const title    = _getDisplayTitle(ent);
+      const isLinked = _linkedIds.has(ent.id);
+
+      const item = document.createElement('div');
+      item.style.cssText = `
+        display: flex; align-items: center; gap: var(--space-2);
+        padding: var(--space-2) var(--space-3); cursor: pointer;
+        transition: background 0.1s; border-bottom: 1px solid var(--color-border);
+        ${isLinked ? 'opacity: 0.45;' : ''}
+      `;
+
+      const timeAgo = _relativeTime(ent.updatedAt || ent.createdAt);
+
+      item.innerHTML = `
+        <span style="font-size: 1rem; flex-shrink: 0;">${cfg?.icon || '📎'}</span>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: var(--text-sm); font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${_escHtml(title)}</div>
+          <div style="font-size: 10px; color: var(--color-text-muted);">${_escHtml(cfg?.label || ent.type)} · ${_escHtml(timeAgo)}</div>
+        </div>
+        <span style="font-size: 10px; padding: 2px 6px; border-radius: 99px; background: ${cfg?.color || '#94a3b8'}22; color: ${cfg?.color || '#94a3b8'}; font-weight: 600; flex-shrink: 0;">${isLinked ? '✓ linked' : '+ link'}</span>
+      `;
+
+      item.addEventListener('mouseenter', () => { if (!isLinked) item.style.background = 'var(--color-surface)'; });
+      item.addEventListener('mouseleave', () => { item.style.background = ''; });
+
+      item.addEventListener('click', async () => {
+        if (isLinked) return;
+        try {
+          const relation = relationInput.value.trim() || 'related to';
+          await saveEdge({
+            fromId:   _entity.id,
+            fromType: _entity.type,
+            toId:     ent.id,
+            toType:   ent.type,
+            relation,
+          });
+          _linkedIds.add(ent.id);
+          // Mark as linked in result
+          item.style.opacity = '0.45';
+          const pill = item.querySelector('span:last-child');
+          if (pill) { pill.textContent = '✓ linked'; }
+          // Refresh connections list
+          await _renderConnectionsList(connContainer);
+        } catch (err) {
+          console.error('[entity-panel] saveEdge failed:', err);
+        }
+      });
+
+      resultsList.appendChild(item);
+    }
+
+    resultsList.style.display = 'block';
+  };
+
+  searchInput.addEventListener('focus', () => {
+    renderSearchResults(searchInput.value);
+  });
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => renderSearchResults(searchInput.value), 120);
+  });
+
+  // Close results on click outside
+  document.addEventListener('click', function closeResults(e) {
+    if (!searchWrap.contains(e.target)) {
+      resultsList.style.display = 'none';
+    }
+  });
+
+  // ── Existing connections list ──────────────────────────────
+  const connHeader = document.createElement('div');
+  connHeader.style.cssText = 'font-size: var(--text-xs); font-weight: var(--weight-semibold); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--space-2);';
+  connHeader.textContent = 'Connections';
+  container.appendChild(connHeader);
+
+  const connContainer = document.createElement('div');
+  container.appendChild(connContainer);
+
+  await _renderConnectionsList(connContainer);
+}
+
+/**
+ * Render the list of all existing connections for _entity,
+ * grouped by relation label, sorted most-recent-first.
+ * Each row has: icon · title · type badge · direction · remove button
+ */
+async function _renderConnectionsList(container) {
+  if (!_entity) return;
+
+  container.innerHTML = '<div style="font-size: var(--text-xs); color: var(--color-text-muted); padding: var(--space-2);">Loading…</div>';
 
   try {
     const [outgoing, incoming] = await Promise.all([
@@ -1384,69 +1721,133 @@ async function _renderRelationsTab(container) {
       getEdgesTo(_entity.id),
     ]);
 
+    // Resolve all linked entities and sort by updatedAt desc
+    const items = [];
+
+    for (const edge of outgoing) {
+      const linked = await getEntity(edge.toId);
+      if (!linked || linked.deleted) continue;
+      items.push({ edge, linked, direction: 'out', sortKey: linked.updatedAt || linked.createdAt || '' });
+    }
+    for (const edge of incoming) {
+      const linked = await getEntity(edge.fromId);
+      if (!linked || linked.deleted) continue;
+      items.push({ edge, linked, direction: 'in', sortKey: linked.updatedAt || linked.createdAt || '' });
+    }
+
+    // Sort by most recent first
+    items.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
     container.innerHTML = '';
 
-    if (outgoing.length === 0 && incoming.length === 0) {
+    if (items.length === 0) {
       container.innerHTML = `
-        <div class="empty-state" style="padding: var(--space-8);">
-          <div class="empty-state-icon">🔗</div>
-          <div class="empty-state-title">No relations yet</div>
-          <div class="empty-state-desc">Link this ${_config.label.toLowerCase()} to other entities using relation fields in Properties.</div>
+        <div style="padding: var(--space-6) var(--space-2); text-align: center; color: var(--color-text-muted); font-size: var(--text-sm);">
+          <div style="font-size: 2rem; margin-bottom: var(--space-2);">🔗</div>
+          <div>No connections yet</div>
+          <div style="font-size: var(--text-xs); margin-top: var(--space-1);">Search above to add connections</div>
         </div>
       `;
       return;
     }
 
-    // Group edges by relation
+    // Group by relation label
     const groups = new Map();
-
-    for (const edge of outgoing) {
-      const label = edge.relation || 'linked';
-      if (!groups.has(`→ ${label}`)) groups.set(`→ ${label}`, []);
-      groups.get(`→ ${label}`).push({ entityId: edge.toId, edgeId: edge.id });
+    for (const item of items) {
+      const relation = item.edge.relation || 'related to';
+      const dir      = item.direction === 'out' ? '→' : '←';
+      const key      = `${dir} ${relation}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
     }
 
-    for (const edge of incoming) {
-      const label = edge.relation || 'linked';
-      if (!groups.has(`← ${label}`)) groups.set(`← ${label}`, []);
-      groups.get(`← ${label}`).push({ entityId: edge.fromId, edgeId: edge.id });
-    }
-
-    for (const [groupLabel, items] of groups) {
+    for (const [groupLabel, groupItems] of groups) {
       const section = document.createElement('div');
-      section.style.cssText = 'margin-bottom: var(--space-4);';
+      section.style.cssText = 'margin-bottom: var(--space-3);';
 
       const header = document.createElement('div');
-      header.textContent = groupLabel;
       header.style.cssText = `
-        font-size: var(--text-xs); font-weight: var(--weight-semibold);
+        font-size: 10px; font-weight: var(--weight-semibold);
         color: var(--color-text-muted); text-transform: uppercase;
-        letter-spacing: 0.04em; padding: var(--space-1) 0; margin-bottom: var(--space-1);
+        letter-spacing: 0.05em; padding: var(--space-1) 0 var(--space-1);
+        border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-1);
+        display: flex; align-items: center; justify-content: space-between;
+      `;
+      header.innerHTML = `
+        <span>${_escHtml(groupLabel)}</span>
+        <span style="font-weight:400; text-transform:none; letter-spacing:0;">${groupItems.length} item${groupItems.length !== 1 ? 's' : ''}</span>
       `;
       section.appendChild(header);
 
-      for (const item of items) {
-        const linked = await getEntity(item.entityId);
-        if (!linked || linked.deleted) continue;
-
-        const cfg    = getEntityTypeConfig(linked.type);
+      for (const { edge, linked, direction } of groupItems) {
+        const cfg      = getEntityTypeConfig(linked.type);
+        const title    = _getDisplayTitle(linked);
+        const timeAgo  = _relativeTime(linked.updatedAt || linked.createdAt);
 
         const row = document.createElement('div');
+        row.dataset.edgeId = edge.id;
         row.style.cssText = `
           display: flex; align-items: center; gap: var(--space-2);
-          padding: var(--space-2); border-radius: var(--radius-sm);
-          cursor: pointer; transition: background var(--transition-fast);
+          padding: var(--space-2) var(--space-1-5);
+          border-radius: var(--radius-sm);
+          transition: background var(--transition-fast);
+          cursor: pointer;
         `;
+
+        const dirArrow = direction === 'out'
+          ? `<span style="color: var(--color-accent); font-size: 10px; flex-shrink:0;">→</span>`
+          : `<span style="color: var(--color-text-muted); font-size: 10px; flex-shrink:0;">←</span>`;
 
         row.innerHTML = `
-          <span>${cfg?.icon || '📎'}</span>
-          <span style="flex: 1; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${_getDisplayTitle(linked)}</span>
-          <span class="type-badge" style="background: ${cfg?.color || '#94A3B8'}; font-size: 0.55rem; padding: 1px var(--space-1-5);">${cfg?.label || linked.type}</span>
+          ${dirArrow}
+          <span style="font-size: 1rem; flex-shrink: 0;">${cfg?.icon || '📎'}</span>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: var(--text-sm); font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${_escHtml(title)}</div>
+            <div style="font-size: 10px; color: var(--color-text-muted);">${_escHtml(cfg?.label || linked.type)} · ${_escHtml(timeAgo)}</div>
+          </div>
+          <span class="type-badge" style="background: ${cfg?.color || '#94a3b8'}; font-size: 9px; padding: 1px 6px; flex-shrink:0;">${_escHtml(cfg?.label || linked.type)}</span>
+          <button class="rel-remove-btn" title="Remove connection" style="
+            background: none; border: none; cursor: pointer; padding: 2px 4px;
+            color: var(--color-text-muted); font-size: 0.85rem; border-radius: var(--radius-sm);
+            flex-shrink: 0; line-height: 1; opacity: 0.5; transition: opacity 0.1s, color 0.1s;
+          ">✕</button>
         `;
 
-        row.addEventListener('mouseenter', () => { row.style.background = 'var(--color-surface-2)'; });
-        row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
-        row.addEventListener('click', () => openPanel(linked.id));
+        row.addEventListener('mouseenter', () => {
+          row.style.background = 'var(--color-surface-2)';
+          row.querySelector('.rel-remove-btn').style.opacity = '1';
+        });
+        row.addEventListener('mouseleave', () => {
+          row.style.background = '';
+          row.querySelector('.rel-remove-btn').style.opacity = '0.5';
+        });
+
+        // Click row → open panel for linked entity
+        row.addEventListener('click', (e) => {
+          if (e.target.classList.contains('rel-remove-btn')) return;
+          openPanel(linked.id);
+        });
+
+        // Remove button
+        row.querySelector('.rel-remove-btn').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          row.querySelector('.rel-remove-btn').style.color = 'var(--color-danger)';
+          try {
+            await deleteEdge(edge.id);
+            row.style.opacity = '0';
+            row.style.transition = 'opacity 0.2s';
+            setTimeout(() => {
+              row.remove();
+              // Update group count
+              const remaining = section.querySelectorAll('[data-edge-id]').length;
+              if (remaining === 0) section.remove();
+              else header.querySelector('span:last-child').textContent =
+                `${remaining} item${remaining !== 1 ? 's' : ''}`;
+            }, 220);
+          } catch (err) {
+            console.error('[entity-panel] deleteEdge failed:', err);
+          }
+        });
 
         section.appendChild(row);
       }
@@ -1454,10 +1855,36 @@ async function _renderRelationsTab(container) {
       container.appendChild(section);
     }
 
+    // Total count at bottom
+    const total = document.createElement('div');
+    total.style.cssText = 'font-size: 10px; color: var(--color-text-muted); text-align: center; padding: var(--space-2); margin-top: var(--space-1);';
+    total.textContent = `${items.length} total connection${items.length !== 1 ? 's' : ''}`;
+    container.appendChild(total);
+
   } catch (err) {
-    console.error('[entity-panel] Relations tab error:', err);
-    container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-4);">Failed to load relations.</div>';
+    console.error('[entity-panel] _renderConnectionsList failed:', err);
+    container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-3);">Failed to load connections.</div>';
   }
+}
+
+/** Human-readable relative time: "2h ago", "3 days ago", "just now" */
+function _relativeTime(isoStr) {
+  if (!isoStr) return '';
+  try {
+    const diff = Date.now() - new Date(isoStr).getTime();
+    const s = Math.floor(diff / 1000);
+    if (s < 60)     return 'just now';
+    if (s < 3600)   return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400)  return `${Math.floor(s / 3600)}h ago`;
+    if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+    return new Date(isoStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch { return ''; }
+}
+
+/** HTML escape helper */
+function _escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ════════════════════════════════════════════════════════════
