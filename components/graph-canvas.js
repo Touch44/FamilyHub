@@ -215,6 +215,19 @@ export async function refreshGraph() {
   await _buildGraph();
 }
 
+/**
+ * Return the Set of entity type keys currently rendered as nodes in the graph.
+ * Used by entity-panel to build accurate filter chips (only types in graph).
+ * @returns {Set<string>}
+ */
+export function getActiveNodeTypes() {
+  const types = new Set();
+  for (const node of _nodes) {
+    if (node.type) types.add(node.type);
+  }
+  return types;
+}
+
 // ══════════════════════════════════════════════════════════════
 // BUILD PIPELINE
 // ══════════════════════════════════════════════════════════════

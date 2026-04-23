@@ -14,7 +14,7 @@ import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
 import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
-import { initGraph, destroyGraph, setFocusId, refreshGraph, setActiveTypes } from './graph-canvas.js';
+import { initGraph, destroyGraph, setFocusId, refreshGraph, setActiveTypes, getActiveNodeTypes } from './graph-canvas.js';
 import { navigate, VIEW_KEYS } from '../core/router.js';
 
 // ── Graph view state ──────────────────────────────────────── //
@@ -1382,6 +1382,16 @@ async function _showRelationPicker(wrap, field) {
 // Entities with temporal dates auto-link to their Daily Review entity.
 
 /**
+ * Format a YYYY-MM-DD dateStr to MM-DD-YYYY for display.
+ * e.g. '2026-04-20' → '04-20-2026'
+ */
+function _formatDateForTitle(dateStr) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const [y, m, d] = dateStr.split('-');
+  return `${m}-${d}-${y}`;
+}
+
+/**
  * Find or create the Daily Review entity (type:'dailyReview') for a date.
  * @param {string} dateStr  — 'YYYY-MM-DD'
  * @returns {Promise<object>} the dailyReview entity
@@ -1394,7 +1404,7 @@ async function _getOrCreateDailyReview(dateStr) {
     if (found) return found;
     return await saveEntity({
       type:  'dailyReview',
-      title: `Daily Review — ${dateStr}`,
+      title: `Daily Review — ${_formatDateForTitle(dateStr)}`,
       date:  dateStr,
     });
   } catch (err) {
@@ -1411,15 +1421,58 @@ async function _getOrCreateDailyReview(dateStr) {
 async function _ensureDailyLinks(entity) {
   if (!entity?.id || !entity?.type) return;
 
-  // Skip Daily Reviews themselves and types without temporal meaning
-  const SKIP_TYPES = new Set(['dailyReview', 'tag', 'note']);
+  // Skip types that are containers or lack temporal meaning
+  const SKIP_TYPES = new Set(['dailyReview', 'tag', 'note', 'budgetEntry', 'person',
+                               'project', 'contact', 'place', 'weblink', 'recipe',
+                               'medication', 'shoppingItem', 'habit', 'goal']);
   if (SKIP_TYPES.has(entity.type)) return;
 
   const datesToLink = new Set();
-  if (entity.createdAt) { const d = _isoToLocalDate(entity.createdAt); if (d) datesToLink.add(d); }
-  if (entity.dueDate)   { const d = _isoToLocalDate(entity.dueDate);   if (d) datesToLink.add(d); }
-  if (entity.date)      { const d = _isoToLocalDate(entity.date);      if (d) datesToLink.add(d); }
-  if (entity.startDate) { const d = _isoToLocalDate(entity.startDate); if (d) datesToLink.add(d); }
+
+  // Each type uses its canonical date ONLY — never mix createdAt with dedicated date fields
+  switch (entity.type) {
+    case 'task':
+      // Tasks link ONLY to their due date
+      if (entity.dueDate) { const d = _isoToLocalDate(entity.dueDate); if (d) datesToLink.add(d); }
+      break;
+
+    case 'event': {
+      // Events link to every date they span (startDate through endDate inclusive)
+      const startD = _isoToLocalDate(entity.date);
+      const endD   = _isoToLocalDate(entity.endDate);
+      if (startD) {
+        datesToLink.add(startD);
+        if (endD && endD > startD) {
+          let cur = new Date(startD + 'T00:00:00');
+          const stop = new Date(endD + 'T00:00:00');
+          let safety = 0;
+          while (cur <= stop && safety++ < 90) {
+            const y = cur.getFullYear();
+            const m = String(cur.getMonth() + 1).padStart(2, '0');
+            const dy = String(cur.getDate()).padStart(2, '0');
+            datesToLink.add(`${y}-${m}-${dy}`);
+            cur.setDate(cur.getDate() + 1);
+          }
+        }
+      }
+      break;
+    }
+
+    case 'appointment':
+    case 'dateEntity':
+    case 'mealPlan':
+      if (entity.date) { const d = _isoToLocalDate(entity.date); if (d) datesToLink.add(d); }
+      break;
+
+    case 'trip':
+      if (entity.startDate) { const d = _isoToLocalDate(entity.startDate); if (d) datesToLink.add(d); }
+      break;
+
+    default:
+      // Other types (idea, research, post, book, etc.) use createdAt
+      if (entity.createdAt) { const d = _isoToLocalDate(entity.createdAt); if (d) datesToLink.add(d); }
+      break;
+  }
 
   if (datesToLink.size === 0) return;
 
@@ -1792,10 +1845,10 @@ async function _renderConnectionsList(container) {
           row.querySelector('.rel-remove-btn').style.opacity = '0.5';
         });
 
-        // Click row → open panel for linked entity
+        // Click row → smart navigation based on linked entity type
         row.addEventListener('click', (e) => {
           if (e.target.classList.contains('rel-remove-btn')) return;
-          openPanel(linked.id);
+          _navigateToLinkedEntity(linked);
         });
 
         // Remove button
@@ -1835,6 +1888,39 @@ async function _renderConnectionsList(container) {
     console.error('[entity-panel] _renderConnectionsList failed:', err);
     container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-3);">Failed to load connections.</div>';
   }
+}
+
+/**
+ * Smart navigation when a linked entity is clicked in the Relations tab.
+ * - dailyReview  → navigate to that specific date in Daily Review view
+ * - task         → navigate to Kanban and open the task panel
+ * - anything else → just open the entity panel
+ * @param {object} linked  the linked entity object (must have .id, .type, .date)
+ */
+function _navigateToLinkedEntity(linked) {
+  if (!linked) return;
+
+  if (linked.type === 'dailyReview' && linked.date) {
+    // Navigate to that specific date in the Daily Review view
+    navigate('daily', { date: linked.date }, `Daily Review — ${_formatDateForTitle(linked.date)}`);
+    return;
+  }
+
+  if (linked.type === 'task') {
+    // Navigate to Kanban view, then open the task panel
+    navigate('kanban', {}, 'Tasks');
+    setTimeout(() => openPanel(linked.id), 150);
+    return;
+  }
+
+  if (linked.type === 'event' || linked.type === 'appointment') {
+    navigate('calendar', {}, 'Calendar');
+    setTimeout(() => openPanel(linked.id), 150);
+    return;
+  }
+
+  // Default: just open the entity panel
+  openPanel(linked.id);
 }
 
 /** Human-readable relative time: "2h ago", "3 days ago", "just now" */
@@ -2197,7 +2283,7 @@ async function _openGraphView(entityId) {
   });
 
   // ── Populate type filter toggles ─────────────────────────
-  await _buildGraphTypeFilters();
+  _buildGraphTypeFilters();
 
   console.log('[entity-panel] [minor] Graph view opened for', entityId);
 }
@@ -2238,36 +2324,27 @@ function _closeGraphView() {
 
 /**
  * Build entity type filter toggle chips in the graph toolbar.
- * Only types that actually have entities in the graph are shown.
- * Each chip can be toggled on/off to show/hide that type.
+ * ONLY shows types that are actually present as nodes in the current graph —
+ * not all types in the DB. Uses getActiveNodeTypes() from graph-canvas.
  */
-async function _buildGraphTypeFilters() {
+function _buildGraphTypeFilters() {
   const filterRow = document.getElementById('graph-type-filters');
   if (!filterRow) return;
 
   // Remove old chips (keep the "Filter:" label)
-  const existingChips = filterRow.querySelectorAll('.graph-filter-chip');
-  existingChips.forEach(c => c.remove());
+  filterRow.querySelectorAll('.graph-filter-chip').forEach(c => c.remove());
 
-  // Gather all entity types that have entities in the DB
+  // Get types currently in the graph (not all types in DB)
+  const presentTypes = getActiveNodeTypes(); // Set<string> of type keys in _nodes
+  if (presentTypes.size === 0) return;
+
   const allTypes = getAllEntityTypes();
-  const typesWithEntities = [];
-
-  for (const cfg of allTypes) {
-    if (!cfg.graphVisible) continue;
-    try {
-      const entities = await getEntitiesByType(cfg.key);
-      const nonDeleted = entities.filter(e => !e.deleted);
-      if (nonDeleted.length > 0) {
-        typesWithEntities.push(cfg);
-      }
-    } catch { /* skip */ }
-  }
+  const typesInGraph = allTypes.filter(cfg => presentTypes.has(cfg.key));
 
   // Initialize filters — all types ON
-  _graphTypeFilters = new Set(typesWithEntities.map(c => c.key));
+  _graphTypeFilters = new Set(typesInGraph.map(c => c.key));
 
-  for (const cfg of typesWithEntities) {
+  for (const cfg of typesInGraph) {
     const chip = document.createElement('button');
     chip.className = 'graph-filter-chip';
     chip.dataset.typeKey = cfg.key;
@@ -2285,7 +2362,6 @@ async function _buildGraphTypeFilters() {
     chip.textContent = `${cfg.icon} ${cfg.labelPlural || cfg.label}`;
     chip.title = `Toggle ${cfg.labelPlural || cfg.label}`;
 
-    // Active state styling
     const setActive = (active) => {
       if (active) {
         chip.style.background = cfg.color + '22';
@@ -2303,13 +2379,9 @@ async function _buildGraphTypeFilters() {
 
     chip.addEventListener('click', () => {
       const isOn = _graphTypeFilters.has(cfg.key);
-      if (isOn) {
-        // Don't allow turning off the last type
-        if (_graphTypeFilters.size <= 1) return;
-        _graphTypeFilters.delete(cfg.key);
-      } else {
-        _graphTypeFilters.add(cfg.key);
-      }
+      if (isOn && _graphTypeFilters.size <= 1) return; // can't turn off last
+      if (isOn) _graphTypeFilters.delete(cfg.key);
+      else      _graphTypeFilters.add(cfg.key);
       setActive(!isOn);
       setActiveTypes(new Set(_graphTypeFilters));
     });
@@ -2317,6 +2389,7 @@ async function _buildGraphTypeFilters() {
     filterRow.appendChild(chip);
   }
 }
+
 
 /**
  * When a node is single-clicked in graph mode, update the panel to show

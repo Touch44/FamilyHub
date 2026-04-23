@@ -337,9 +337,19 @@ async function _saveDailyNote(dateStr, body, existingId) {
 // ── Daily Review entity helpers ───────────────────────────── //
 
 /**
+ * Format YYYY-MM-DD → MM-DD-YYYY for display.
+ * e.g. '2026-04-20' → '04-20-2026'
+ */
+function _formatDateTitle(dateStr) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const [y, m, d] = dateStr.split('-');
+  return `${m}-${d}-${y}`;
+}
+
+/**
  * Find or create the single Daily Review entity for a given date string.
  * Stored as a 'dailyReview' type entity with date = dateStr and
- * title = 'Daily Review — YYYY-MM-DD'. One per date, idempotent.
+ * title = 'Daily Review — MM-DD-YYYY'. One per date, idempotent.
  * @param {string} dateStr  'YYYY-MM-DD'
  * @returns {Promise<object>} the dailyReview entity
  */
@@ -352,7 +362,7 @@ async function _getOrCreateDailyReview(dateStr) {
     const account = getAccount();
     return await saveEntity({
       type:  'dailyReview',
-      title: `Daily Review — ${dateStr}`,
+      title: `Daily Review — ${_formatDateTitle(dateStr)}`,
       date:  dateStr,
     }, account?.id);
   } catch (err) {
@@ -406,19 +416,28 @@ async function _syncDailyReviewLinks(dateStr, data) {
     const existing = await getEdgesFrom(dr.id, 'contains');
     const linkedSet = new Set(existing.map(e => e.toId));
 
-    // ── Tasks: due today or overdue ───────────────────────
+    // ── Tasks: due EXACTLY on this date only ─────────────
+    // We do NOT link overdue tasks (task's own due date DR handles that)
     const filteredTasks = data.tasks.filter(t => {
       if (new Set(['done', 'Done']).has(t.status)) return false;
       const due = _isoToLocalDate(t.dueDate);
-      return due && due <= dateStr;
+      return due === dateStr; // EXACT match only
     });
     for (const t of filteredTasks) {
       await _linkToDailyReview(dr.id, t.id, 'task', linkedSet);
       linkedSet.add(t.id);
     }
 
-    // ── Events: date = today ──────────────────────────────
-    for (const e of data.events.filter(e => _isoToLocalDate(e.date) === dateStr)) {
+    // ── Events: link if this date falls within event span ─
+    // Single-day: date === dateStr
+    // Multi-day: date <= dateStr <= endDate
+    for (const e of data.events.filter(e => {
+      const start = _isoToLocalDate(e.date);
+      const end   = _isoToLocalDate(e.endDate);
+      if (!start) return false;
+      if (!end || end <= start) return start === dateStr;
+      return start <= dateStr && dateStr <= end;
+    })) {
       await _linkToDailyReview(dr.id, e.id, 'event', linkedSet);
       linkedSet.add(e.id);
     }
