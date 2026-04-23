@@ -1,21 +1,22 @@
 /**
- * FamilyHub v2.0 — views/daily.js
+ * FamilyHub v2.0 — views/daily.js [minor v16]
  * Daily Review view — renders into #view-daily when view="daily"
  *
- * Sections (all collapsible, Tasks open by default):
- *   1. Daily Note       — editable richtext, saved as note{type:"daily-note"}, autosave on blur
- *   2. Tasks            — due today or overdue (status != Done/done), sorted overdue-first then priority
+ * Sections (all collapsible):
+ *   1. Daily Notes      — notes connected to this date's Daily Review entity; open by default
+ *   2. Tasks            — due today or overdue (status != Done/done), sorted overdue-first then priority; open by default
  *   3. Events           — events whose date falls on today
- *   4. Notes Created    — note entities with createdAt date = today
- *   5. Activity Log     — auditLog entries for today
- *   6. Reminders        — appointment entities with reminder=true and date = today
- *   7. Birthdays/Dates  — dateEntity records whose month+day = today
- *   8. Meals Today      — mealPlan entities for today grouped by mealType
+ *   4. Wall Posts       — post entities created today
+ *   5. Reminders        — appointment entities with reminder=true and date = today
+ *   6. Birthdays/Dates  — dateEntity records whose month+day = today
+ *   7. Meals Today      — mealPlan entities for today grouped by mealType
+ *   8. Comments         — comment note entities created today
+ *   9. Activity Log     — auditLog entries for today
  *
  * Top bar:
  *   - Date display "Monday, April 21" with prev/next arrows
  *   - 7-day mini-calendar strip — click to jump
- *   - "Add Task" and "Add Note" quick buttons
+ *   - "+ Add" dropdown: create any entity type and connect it to this date's Daily Review entity
  *
  * Section open/closed state stored in sessionStorage.
  * Registration: registerView('daily', renderDaily) called at module init.
@@ -23,9 +24,8 @@
 
 import { registerView, navigate, VIEW_KEYS } from '../core/router.js';
 import { getEntitiesByType, getEntity, getSetting,
-         saveEntity, saveEdge, getEdgesFrom, deleteEdge,
-         uid }                             from '../core/db.js';
-import { emit, EVENTS }                    from '../core/events.js';
+         saveEntity, saveEdge, getEdgesFrom }  from '../core/db.js';
+import { emit, on, EVENTS }                    from '../core/events.js';
 import { getAccount }                      from '../core/auth.js';
 
 // ── Constants ─────────────────────────────────────────────── //
@@ -38,10 +38,9 @@ const SS_PREFIX = 'fh_daily_section_';
 
 /** Default open state per section key */
 const SECTION_DEFAULTS = {
-  'daily-note':   true,
+  'notes':        true,
   'tasks':        true,
   'events':       false,
-  'notes':        false,
   'wall-posts':   false,
   'comments':     false,
   'activity':     false,
@@ -226,18 +225,6 @@ function _filterEvents(events, dateStr) {
 }
 
 /**
- * Filter notes created today: createdAt date = dateStr.
- * Excludes daily-note type (shown in the dedicated Daily Note section).
- */
-function _filterNotes(notes, dateStr) {
-  return notes.filter(n =>
-    n.type !== 'daily-note' &&
-    n.category !== 'Comment' &&   // Comments shown in their own section
-    _isoToLocalDate(n.createdAt) === dateStr
-  );
-}
-
-/**
  * Filter wall posts created on the given dateStr.
  */
 function _filterWallPosts(posts, dateStr) {
@@ -304,34 +291,6 @@ function _filterMeals(mealPlans, dateStr) {
     grouped[slot].push(mp);
   }
   return grouped;
-}
-
-// ── Daily Note helpers ────────────────────────────────────── //
-
-/**
- * Find the daily-note entity for a given dateStr, or return null.
- * Stored as note entity with type="daily-note" and title=dateStr.
- */
-async function _loadDailyNote(dateStr) {
-  const notes = await getEntitiesByType('note');
-  // type field overloaded: we store dailyNote as category:"Daily" + title=dateStr
-  // per spec: note entity with type="daily-note" keyed by date
-  // Since entity.type is always "note" in graph-engine, we use a custom marker:
-  //   entity.category === 'Daily' && entity.dailyDate === dateStr
-  return notes.find(n => n.dailyDate === dateStr) || null;
-}
-
-async function _saveDailyNote(dateStr, body, existingId) {
-  const account = getAccount();
-  const entity = {
-    id:        existingId || uid(),
-    type:      'note',
-    title:     `Daily Note — ${dateStr}`,
-    body,
-    category:  'Daily',
-    dailyDate: dateStr,
-  };
-  return saveEntity(entity, account?.id);
 }
 
 // ── Daily Review entity helpers ───────────────────────────── //
@@ -501,10 +460,95 @@ async function _syncDailyReviewLinks(dateStr, data) {
   }
 }
 
+// ── Entity selector catalogue ─────────────────────────────── //
+
+/**
+ * All entity types available from the "+ Add" dropdown.
+ * Only types that make sense to connect to a Daily Review are included.
+ * dailyReview itself and tag/post are excluded.
+ */
+const ADD_ENTITY_TYPES = [
+  { key: 'note',         icon: '📝', label: 'Note' },
+  { key: 'task',         icon: '✅', label: 'Task' },
+  { key: 'event',        icon: '📅', label: 'Event' },
+  { key: 'appointment',  icon: '🔔', label: 'Appointment' },
+  { key: 'budgetEntry',  icon: '💰', label: 'Budget Entry' },
+  { key: 'mealPlan',     icon: '🍽️', label: 'Meal Plan' },
+  { key: 'shoppingItem', icon: '🛒', label: 'Shopping Item' },
+  { key: 'habit',        icon: '🔄', label: 'Habit' },
+  { key: 'goal',         icon: '🎯', label: 'Goal' },
+  { key: 'idea',         icon: '💡', label: 'Idea' },
+  { key: 'research',     icon: '🔬', label: 'Research' },
+  { key: 'book',         icon: '📚', label: 'Book' },
+  { key: 'trip',         icon: '✈️', label: 'Trip' },
+  { key: 'place',        icon: '📍', label: 'Place' },
+  { key: 'weblink',      icon: '🔗', label: 'Web Link' },
+  { key: 'medication',   icon: '💊', label: 'Medication' },
+  { key: 'recipe',       icon: '🥗', label: 'Recipe' },
+  { key: 'contact',      icon: '🧑‍💼', label: 'Contact' },
+  { key: 'document',     icon: '📄', label: 'Document' },
+  { key: 'project',      icon: '📁', label: 'Project' },
+];
+
+/**
+ * Load note entities connected to the Daily Review for this date via
+ * the graph edge (drId → note, relation='contains').
+ * Returns an array of note entity objects.
+ */
+async function _loadDRLinkedNotes(dateStr) {
+  try {
+    const dr = await _getOrCreateDailyReview(dateStr);
+    if (!dr) return [];
+    const edges = await getEdgesFrom(dr.id, 'contains');
+    const noteEdges = edges.filter(e => e.toType === 'note');
+    if (!noteEdges.length) return [];
+    // Resolve each edge to its entity
+    const resolved = await Promise.all(
+      noteEdges.map(e => getEntity(e.toId).catch(() => null))
+    );
+    return resolved.filter(n => n && !n.deleted && n.category !== 'Comment');
+  } catch (err) {
+    console.warn('[daily] _loadDRLinkedNotes failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Create an entity via FAB, then connect it to the Daily Review once saved.
+ * Listens for the ENTITY_SAVED event once and links the new entity.
+ */
+async function _createAndLink(entityType, dateStr, prefill = {}) {
+  // Get/create DR first so the ID is ready when the entity saves
+  const dr = await _getOrCreateDailyReview(dateStr);
+
+  // Listen for the next entity:saved of this type then link it (one-shot)
+  const unsub = on(EVENTS.ENTITY_SAVED, async ({ entity }) => {
+    if (entity?.type !== entityType) return;
+    unsub(); // detach immediately
+    try {
+      await saveEdge({
+        fromId:   dr.id,
+        fromType: 'dailyReview',
+        toId:     entity.id,
+        toType:   entityType,
+        relation: 'contains',
+      });
+      console.log('[daily] linked', entityType, entity.id, '→ DR', dr.id);
+    } catch (err) {
+      console.warn('[daily] failed to link entity to DR:', err);
+    }
+    // Refresh the view to show the new entity
+    renderDaily({ _internal: true });
+  });
+
+  // Open the FAB form
+  emit(EVENTS.FAB_CREATE, { entityType, prefill });
+}
+
 // ── DOM builders ──────────────────────────────────────────── //
 
 /**
- * Build the top bar: headline date, prev/next arrows, week strip, action buttons.
+ * Build the top bar: headline date, prev/next arrows, week strip, "+ Add" entity selector.
  */
 function _buildTopBar(container, dateStr) {
   const bar = document.createElement('div');
@@ -516,8 +560,10 @@ function _buildTopBar(container, dateStr) {
       <button class="btn-icon daily-next-btn" title="Next day" aria-label="Next day">›</button>
       <button class="btn btn-ghost btn-sm daily-today-btn" title="Go to today" aria-label="Go to today">Today</button>
       <div class="daily-quick-btns">
-        <button class="btn btn-primary btn-sm daily-add-task-btn">+ Task</button>
-        <button class="btn btn-ghost btn-sm daily-add-note-btn">+ Note</button>
+        <div class="daily-add-wrapper" style="position:relative;">
+          <button class="btn btn-primary btn-sm daily-add-btn" aria-haspopup="true" aria-expanded="false">+ Add</button>
+          <div class="daily-add-menu" role="menu" aria-label="Add entity to this day" hidden></div>
+        </div>
       </div>
     </div>
     <div class="daily-week-strip" id="daily-week-strip" role="list" aria-label="Week view"></div>
@@ -547,16 +593,54 @@ function _buildTopBar(container, dateStr) {
     todayBtn.style.opacity = '0.4';
   }
 
-  bar.querySelector('.daily-add-task-btn').addEventListener('click', () => {
-    emit(EVENTS.FAB_CREATE, { entityType: 'task', prefill: { dueDate: dateStr } });
-  });
+  // ── "+ Add" dropdown ─────────────────────────────────────
+  const addBtn  = bar.querySelector('.daily-add-btn');
+  const addMenu = bar.querySelector('.daily-add-menu');
 
-  bar.querySelector('.daily-add-note-btn').addEventListener('click', () => {
-    emit(EVENTS.FAB_CREATE, { entityType: 'note', prefill: { category: 'Daily' } });
+  // Populate menu items
+  for (const { key, icon, label } of ADD_ENTITY_TYPES) {
+    const item = document.createElement('button');
+    item.className = 'daily-add-menu-item';
+    item.setAttribute('role', 'menuitem');
+    item.innerHTML = `<span class="daily-add-menu-icon">${icon}</span><span>${label}</span>`;
+    item.addEventListener('click', () => {
+      _closeAddMenu(addBtn, addMenu);
+      // Build sensible prefill for date-bearing entity types
+      const prefill = {};
+      if (['task'].includes(key))         prefill.dueDate  = dateStr;
+      if (['event', 'appointment', 'mealPlan', 'budgetEntry'].includes(key)) prefill.date = dateStr;
+      if (key === 'note')                  prefill.category = 'Daily';
+      _createAndLink(key, dateStr, prefill);
+    });
+    addMenu.appendChild(item);
+  }
+
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !addMenu.hidden;
+    if (isOpen) {
+      _closeAddMenu(addBtn, addMenu);
+    } else {
+      addMenu.hidden = false;
+      addBtn.setAttribute('aria-expanded', 'true');
+      // Close when clicking outside
+      const outside = (ev) => {
+        if (!addMenu.contains(ev.target) && ev.target !== addBtn) {
+          _closeAddMenu(addBtn, addMenu);
+          document.removeEventListener('click', outside);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', outside), 0);
+    }
   });
 
   _buildWeekStrip(bar.querySelector('#daily-week-strip'), dateStr);
   container.appendChild(bar);
+}
+
+function _closeAddMenu(btn, menu) {
+  menu.hidden = true;
+  btn.setAttribute('aria-expanded', 'false');
 }
 
 /**
@@ -648,50 +732,35 @@ function _renderEmpty(body, message) {
 // ── Section renderers ─────────────────────────────────────── //
 
 /**
- * Section 1: Daily Note — editable richtext, autosave on blur.
+ * Section 1: Daily Notes — note entities connected to this date's Daily Review entity.
+ * Created via the "+ Add → Note" selector; each note is linked via a 'contains' edge.
  */
-async function _renderDailyNote(container, dateStr) {
-  const { wrapper, body } = _buildSection('daily-note', '📓', 'Daily Note');
+async function _renderDailyNotes(container, dateStr) {
+  const notes = await _loadDRLinkedNotes(dateStr);
+  const { wrapper, body } = _buildSection('notes', '📝', 'Notes', notes.length || null);
   container.appendChild(wrapper);
 
-  // Load existing note for this date
-  let existingNote = await _loadDailyNote(dateStr);
+  if (!notes.length) {
+    _renderEmpty(body, 'No notes for this day yet — use "+ Add → Note" to create one.');
+    return;
+  }
 
-  const saved   = document.createElement('span');
-  saved.className = 'daily-note-saved hidden';
-  saved.textContent = '✓ Saved';
-  saved.setAttribute('aria-live', 'polite');
+  const list = document.createElement('div');
+  list.className = 'daily-notes-list';
 
-  const editor = document.createElement('div');
-  editor.className = 'daily-note-editor';
-  editor.contentEditable = 'true';
-  editor.setAttribute('role', 'textbox');
-  editor.setAttribute('aria-multiline', 'true');
-  editor.setAttribute('aria-label', 'Daily note for ' + dateStr);
-  editor.setAttribute('placeholder', 'Write your daily note here…');
-  editor.innerHTML = existingNote?.body || '';
+  for (const note of notes) {
+    const preview = _stripHtml(note.body || '').slice(0, 80);
+    const row = document.createElement('div');
+    row.className = 'daily-note-row';
+    row.innerHTML = `
+      <span class="daily-note-row-title">${_esc(note.title || 'Untitled')}</span>
+      ${preview ? `<span class="daily-note-row-preview">${_esc(preview)}${preview.length >= 80 ? '…' : ''}</span>` : ''}
+    `;
+    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'note', entityId: note.id }));
+    list.appendChild(row);
+  }
 
-  let _saveTimer = null;
-
-  const doSave = async () => {
-    const body = editor.innerHTML;
-    try {
-      const saved_entity = await _saveDailyNote(dateStr, body, existingNote?.id);
-      if (!existingNote) existingNote = saved_entity;
-      else existingNote.body = body;
-      // Show "Saved" indicator briefly
-      saved.classList.remove('hidden');
-      clearTimeout(_saveTimer);
-      _saveTimer = setTimeout(() => saved.classList.add('hidden'), 2000);
-    } catch (err) {
-      console.error('[daily] Failed to save daily note:', err);
-    }
-  };
-
-  editor.addEventListener('blur', doSave);
-
-  body.appendChild(saved);
-  body.appendChild(editor);
+  body.appendChild(list);
 }
 
 /**
@@ -806,37 +875,6 @@ function _renderEvents(container, dateStr, events) {
       </div>
     `;
     row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'event', entityId: ev.id }));
-    list.appendChild(row);
-  }
-
-  body.appendChild(list);
-}
-
-/**
- * Section 4: Notes Created — note entities created today.
- */
-function _renderNotes(container, dateStr, notes) {
-  const filtered = _filterNotes(notes, dateStr);
-  const { wrapper, body } = _buildSection('notes', '📝', 'Notes Created', filtered.length);
-  container.appendChild(wrapper);
-
-  if (!filtered.length) {
-    _renderEmpty(body, 'No notes created today yet.');
-    return;
-  }
-
-  const list = document.createElement('div');
-  list.className = 'daily-notes-list';
-
-  for (const note of filtered) {
-    const preview = _stripHtml(note.body || '').slice(0, 50);
-    const row = document.createElement('div');
-    row.className = 'daily-note-row';
-    row.innerHTML = `
-      <span class="daily-note-row-title">${_esc(note.title || 'Untitled')}</span>
-      ${preview ? `<span class="daily-note-row-preview">${_esc(preview)}…</span>` : ''}
-    `;
-    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: 'note', entityId: note.id }));
     list.appendChild(row);
   }
 
@@ -1303,34 +1341,43 @@ function _injectStyles() {
     }
     .daily-empty-icon { font-size: 1.1rem; }
 
-    /* ── Daily Note Editor ───────────────────────────── */
-    .daily-note-saved {
-      font-size: var(--text-xs);
-      color: var(--color-success-text);
-      display: block;
-      text-align: right;
-      margin-bottom: var(--space-1);
-      transition: opacity 0.3s;
-    }
-    .daily-note-saved.hidden { opacity: 0; pointer-events: none; }
-    .daily-note-editor {
-      min-height: 100px;
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius-sm);
-      padding: var(--space-3);
-      font-size: var(--text-sm);
-      color: var(--color-text);
+    /* ── Add Entity Dropdown ─────────────────────────── */
+    .daily-add-wrapper { position: relative; }
+    .daily-add-menu {
+      position: absolute;
+      top: calc(100% + var(--space-1));
+      right: 0;
+      z-index: 200;
       background: var(--color-bg);
-      outline: none;
-      line-height: 1.6;
-      transition: border-color var(--transition-base);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      min-width: 200px;
+      max-height: 360px;
+      overflow-y: auto;
+      padding: var(--space-1-5);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-0-5);
     }
-    .daily-note-editor:focus { border-color: var(--color-border-focus); }
-    .daily-note-editor:empty:before {
-      content: attr(placeholder);
-      color: var(--color-text-muted);
-      pointer-events: none;
+    .daily-add-menu[hidden] { display: none; }
+    .daily-add-menu-item {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-2-5);
+      border-radius: var(--radius-sm);
+      border: none;
+      background: transparent;
+      color: var(--color-text);
+      font-size: var(--text-sm);
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      transition: background var(--transition-base);
     }
+    .daily-add-menu-item:hover { background: var(--color-surface-2); color: var(--color-accent); }
+    .daily-add-menu-icon { font-size: 1.1rem; width: 1.4rem; text-align: center; flex-shrink: 0; }
 
     /* ── Task List ───────────────────────────────────── */
     .daily-task-list { display: flex; flex-direction: column; gap: var(--space-1-5); }
@@ -1611,8 +1658,8 @@ async function renderDaily(params = {}) {
     sections.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-3);';
     viewEl.appendChild(sections);
 
-    // ── Section 1: Daily Note ────────────────────────────────
-    await _renderDailyNote(sections, dateStr);
+    // ── Section 1: Daily Notes (DR-linked) ───────────────────
+    await _renderDailyNotes(sections, dateStr);
 
     // ── Section 2: Tasks (open by default) ───────────────────
     await _renderTasks(sections, dateStr, tasks, personMap, projectMap);
@@ -1620,25 +1667,22 @@ async function renderDaily(params = {}) {
     // ── Section 3: Events ────────────────────────────────────
     _renderEvents(sections, dateStr, events);
 
-    // ── Section 4: Notes Created ─────────────────────────────
-    _renderNotes(sections, dateStr, notes);
-
-    // ── Section 5: Wall Posts ────────────────────────────────
+    // ── Section 4: Wall Posts ────────────────────────────────
     _renderWallPosts(sections, dateStr, posts, personMap, accountMap);
 
-    // ── Section 6: Comments ──────────────────────────────────
-    _renderComments(sections, dateStr, notes, personMap, accountMap);
-
-    // ── Section 7: Reminders ─────────────────────────────────
+    // ── Section 5: Reminders ─────────────────────────────────
     _renderReminders(sections, dateStr, appointments);
 
-    // ── Section 8: Birthdays / Dates ─────────────────────────
+    // ── Section 6: Birthdays / Dates ─────────────────────────
     _renderBirthdays(sections, dateEntities);
 
-    // ── Section 9: Meals Today ───────────────────────────────
+    // ── Section 7: Meals Today ───────────────────────────────
     _renderMeals(sections, dateStr, mealPlans);
 
-    // ── Section 10: Activity Log (last) ──────────────────────
+    // ── Section 8: Comments ──────────────────────────────────
+    _renderComments(sections, dateStr, notes, personMap, accountMap);
+
+    // ── Section 9: Activity Log (last) ──────────────────────
     await _renderActivityLog(sections, dateStr, auditLog, accountMap);
 
   } catch (err) {
