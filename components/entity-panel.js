@@ -2614,6 +2614,13 @@ function _navigateToEntityView(entity, config) {
   const viewPath = TYPE_VIEW_MAP[entity.type];
   if (!viewPath) return;
 
+  // dailyReview: navigate to that specific date, not just the daily view home
+  if (entity.type === 'dailyReview' && entity.date) {
+    navigate('daily', { date: entity.date },
+      `Daily Review — ${_formatDateForTitle(entity.date)}`);
+    return;
+  }
+
   if (viewPath.startsWith('entity-type/')) {
     const typeKey = viewPath.split('/')[1];
     navigate(VIEW_KEYS.ENTITY_TYPE, { entityType: typeKey }, config.labelPlural || config.label);

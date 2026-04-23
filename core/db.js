@@ -520,16 +520,19 @@ export async function saveEdge(edge, byAccountId) {
     };
 
     const db = await _getDB();
-    const tx = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
 
-    await tx.objectStore(STORES.EDGES).put(saved);
-    await _addToDirtyQueue(tx, 'dirtyEdges', saved.id);
-    // Fetch fromEntity title for audit log readability
+    // Fetch fromEntity title BEFORE opening the transaction so the
+    // _appendAuditLog call doesn't cause "transaction has finished" errors.
     let _linkTitle = null;
     try {
       const _fe = await db.get(STORES.ENTITIES, saved.fromId);
       if (_fe) _linkTitle = _fe.title || _fe.name || (_fe.body ? _fe.body.slice(0,60) : null) || saved.fromId;
     } catch {}
+
+    const tx = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
+
+    await tx.objectStore(STORES.EDGES).put(saved);
+    await _addToDirtyQueue(tx, 'dirtyEdges', saved.id);
 
     await _appendAuditLog(tx, {
       action:      'link',
@@ -568,15 +571,17 @@ export async function deleteEdge(id, byAccountId) {
     if (!edge) return;
 
     const now = new Date().toISOString();
-    const tx  = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
 
-    await tx.objectStore(STORES.EDGES).delete(id);
-    // Fetch fromEntity title for audit log readability
+    // Fetch fromEntity title BEFORE opening the transaction (same fix as saveEdge)
     let _ulTitle = null;
     try {
       const _ufe = await db.get(STORES.ENTITIES, edge.fromId);
       if (_ufe) _ulTitle = _ufe.title || _ufe.name || (_ufe.body ? _ufe.body.slice(0,60) : null) || edge.fromId;
     } catch {}
+
+    const tx  = db.transaction([STORES.EDGES, STORES.SETTINGS], 'readwrite');
+
+    await tx.objectStore(STORES.EDGES).delete(id);
 
     await _appendAuditLog(tx, {
       action:      'unlink',
