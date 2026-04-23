@@ -4,7 +4,7 @@
    ============================================================ */
 
 /* ── Google Fonts Import ───────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&family=Instrument+Serif:ital@0;1&display=swap');
 
 :root {
 
@@ -97,18 +97,18 @@
   --edge-reacts-to:     #EC4899;
 
   /* ── Typography ─────────────────────────────────────────── */
-  --font-body:          "Geist", system-ui, -apple-system, sans-serif;
+  --font-body:          "Inter", system-ui, -apple-system, sans-serif;
   --font-heading:       "Instrument Serif", Georgia, serif;
-  --font-mono:          "Geist Mono", "Fira Code", monospace;
+  --font-mono:          "Fira Code", "Cascadia Code", ui-monospace, monospace;
 
   --text-xs:    0.6875rem;  /* 11px */
   --text-sm:    0.8125rem;  /* 13px */
   --text-base:  0.9375rem;  /* 15px */
   --text-md:    1rem;       /* 16px */
   --text-lg:    1.125rem;   /* 18px */
-  --text-xl:    1.3125rem;  /* 21px */
-  --text-2xl:   1.625rem;   /* 26px */
-  --text-3xl:   2rem;       /* 32px */
+  --text-xl:    1.25rem;    /* 20px */
+  --text-2xl:   1.5rem;     /* 24px */
+  --text-3xl:   1.875rem;   /* 30px */
 
   --leading-tight:   1.25;
   --leading-normal:  1.5;
@@ -162,12 +162,12 @@
   --shadow-sidebar:     2px 0 12px rgba(15, 23, 42, 0.15);
 
   /* ── Layout (Blueprint §9.1) ────────────────────────────── */
-  --sidebar-width:      240px;
+  --sidebar-width:      228px;
   --sidebar-collapsed:  0px;
-  --topbar-height:      52px;
-  --breadcrumb-height:  36px;
-  --panel-width:        380px;
-  --fab-size:           56px;
+  --topbar-height:      48px;
+  --breadcrumb-height:  34px;
+  --panel-width:        400px;
+  --fab-size:           52px;
   --graph-filter-width: 220px;
 
   /* ── Transitions ─────────────────────────────────────────── */

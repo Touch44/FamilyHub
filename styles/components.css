@@ -8,19 +8,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-1-5);
+  padding: var(--space-2) var(--space-3-5);
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   font-family: var(--font-body);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
+  letter-spacing: -0.005em;
   cursor: pointer;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
     box-shadow var(--transition-fast),
-    transform var(--transition-fast);
+    transform 80ms ease;
   text-decoration: none;
   user-select: none;
   white-space: nowrap;
@@ -28,7 +29,7 @@
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
   pointer-events: none;
 }
@@ -149,7 +150,7 @@
 .select,
 .textarea {
   width: 100%;
-  padding: var(--space-2-5) var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -159,6 +160,7 @@
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   outline: none;
   appearance: none;
+  letter-spacing: -0.005em;
 }
 
 .input::placeholder,
@@ -297,12 +299,12 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-0-5) var(--space-2);
-  border-radius: var(--radius-full);
-  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
   font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
   color: #fff;
   white-space: nowrap;
 }
@@ -707,29 +709,31 @@
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: var(--color-overlay);
+  background: rgba(15, 23, 42, 0.5);
   z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
+  backdrop-filter: blur(1px);
 }
 
 .modal {
   background: var(--color-bg);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-2xl);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.22), 0 4px 16px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--color-border);
   width: 100%;
   max-width: 520px;
-  max-height: 90dvh;
+  max-height: 92dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: modalIn var(--transition-slow) both;
+  animation: modalIn 0.2s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 @keyframes modalIn {
-  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
@@ -745,8 +749,8 @@
 /* ── Entity Form: two-row header (type badge top, title below) ── */
 .ef-header {
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) var(--space-3);
+  gap: var(--space-1-5);
+  padding: var(--space-3-5) var(--space-5) var(--space-3);
 }
 
 .ef-header-top {
@@ -772,6 +776,7 @@
   color: var(--color-text);
   margin: 0;
   line-height: 1.3;
+  letter-spacing: -0.01em;
 }
 
 .modal-title {
@@ -779,6 +784,7 @@
   font-weight: var(--weight-semibold);
   color: var(--color-text);
   flex: 1;
+  letter-spacing: -0.01em;
 }
 
 .modal-body {
@@ -790,10 +796,12 @@
 .modal-footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3-5) var(--space-5);
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
+  background: var(--color-surface);
 }
 
 /* ── Spending Bar ────────────────────────────────────────── */

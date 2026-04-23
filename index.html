@@ -19,10 +19,10 @@
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
   <!-- Styles (order matters: tokens → layout → components → dark) -->
-  <link rel="stylesheet" href="./styles/tokens.css" />
-  <link rel="stylesheet" href="./styles/layout.css" />
-  <link rel="stylesheet" href="./styles/components.css" />
-  <link rel="stylesheet" href="./styles/dark.css" />
+  <link rel="stylesheet" href="./styles/tokens.css?v=2.2.0" />
+  <link rel="stylesheet" href="./styles/layout.css?v=2.2.0" />
+  <link rel="stylesheet" href="./styles/components.css?v=2.2.0" />
+  <link rel="stylesheet" href="./styles/dark.css?v=2.2.0" />
 </head>
 <body>
 
@@ -225,57 +225,57 @@
       <li role="listitem">
         <button class="nav-item" data-view="daily"
                 aria-label="Daily Review">
-          <span class="nav-item-icon" aria-hidden="true">☀️</span>
-          <span class="nav-item-label">Daily Review</span>
+          <span class="nav-item-icon" aria-hidden="true">◈</span>
+          <span class="nav-item-label">Daily</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="kanban"
                 aria-label="Tasks and Kanban board">
-          <span class="nav-item-icon" aria-hidden="true">✅</span>
+          <span class="nav-item-icon" aria-hidden="true">⊡</span>
           <span class="nav-item-label">Tasks</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="calendar"
                 aria-label="Calendar">
-          <span class="nav-item-icon" aria-hidden="true">📅</span>
+          <span class="nav-item-icon" aria-hidden="true">▦</span>
           <span class="nav-item-label">Calendar</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="family-wall"
                 aria-label="Family Wall">
-          <span class="nav-item-icon" aria-hidden="true">📌</span>
+          <span class="nav-item-icon" aria-hidden="true">⬡</span>
           <span class="nav-item-label">Family Wall</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="family-matters"
                 aria-label="Family Matters">
-          <span class="nav-item-icon" aria-hidden="true">🏠</span>
+          <span class="nav-item-icon" aria-hidden="true">⌂</span>
           <span class="nav-item-label">Family Matters</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="notes"
                 aria-label="Notes">
-          <span class="nav-item-icon" aria-hidden="true">📝</span>
+          <span class="nav-item-icon" aria-hidden="true">≡</span>
           <span class="nav-item-label">Notes</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="projects"
                 aria-label="Projects">
-          <span class="nav-item-icon" aria-hidden="true">📁</span>
+          <span class="nav-item-icon" aria-hidden="true">⊞</span>
           <span class="nav-item-label">Projects</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="graph"
                 aria-label="Knowledge Graph">
-          <span class="nav-item-icon" aria-hidden="true">🔮</span>
-          <span class="nav-item-label">Knowledge Graph</span>
+          <span class="nav-item-icon" aria-hidden="true">◎</span>
+          <span class="nav-item-label">Graph</span>
         </button>
       </li>
 
@@ -286,82 +286,82 @@
       <li role="listitem">
         <button class="nav-item" data-view="budget"
                 aria-label="Budget and expenses">
-          <span class="nav-item-icon" aria-hidden="true">💰</span>
+          <span class="nav-item-icon" aria-hidden="true">◷</span>
           <span class="nav-item-label">Budget</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="recipes"
                 aria-label="Recipes and meal planner">
-          <span class="nav-item-icon" aria-hidden="true">🍽️</span>
+          <span class="nav-item-icon" aria-hidden="true">⊛</span>
           <span class="nav-item-label">Recipes</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="documents"
                 aria-label="Documents and expiry tracker">
-          <span class="nav-item-icon" aria-hidden="true">📄</span>
+          <span class="nav-item-icon" aria-hidden="true">⊟</span>
           <span class="nav-item-label">Documents</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="contacts"
                 aria-label="Contacts">
-          <span class="nav-item-icon" aria-hidden="true">📞</span>
+          <span class="nav-item-icon" aria-hidden="true">⊕</span>
           <span class="nav-item-label">Contacts</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="gallery"
                 aria-label="Photo gallery">
-          <span class="nav-item-icon" aria-hidden="true">🖼️</span>
+          <span class="nav-item-icon" aria-hidden="true">▣</span>
           <span class="nav-item-label">Gallery</span>
         </button>
       </li>
 
       <!-- Entity Types (Blueprint §4.2) -->
       <li role="listitem" aria-hidden="true">
-        <div class="sidebar-section-label">── Entity Types ──</div>
+        <div class="sidebar-section-label">Collections</div>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="entity-type" data-entity-type="idea"
                 data-label="Ideas" aria-label="Ideas">
-          <span class="nav-item-icon" aria-hidden="true">💡</span>
+          <span class="nav-item-icon" aria-hidden="true">◇</span>
           <span class="nav-item-label">Ideas</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="entity-type" data-entity-type="research"
                 data-label="Research" aria-label="Research">
-          <span class="nav-item-icon" aria-hidden="true">🔬</span>
+          <span class="nav-item-icon" aria-hidden="true">⊘</span>
           <span class="nav-item-label">Research</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="entity-type" data-entity-type="book"
                 data-label="Books" aria-label="Books">
-          <span class="nav-item-icon" aria-hidden="true">📚</span>
+          <span class="nav-item-icon" aria-hidden="true">⊏</span>
           <span class="nav-item-label">Books</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="entity-type" data-entity-type="trip"
                 data-label="Trips" aria-label="Trips">
-          <span class="nav-item-icon" aria-hidden="true">✈️</span>
+          <span class="nav-item-icon" aria-hidden="true">△</span>
           <span class="nav-item-label">Trips</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="entity-type" data-entity-type="place"
                 data-label="Places" aria-label="Places">
-          <span class="nav-item-icon" aria-hidden="true">📍</span>
+          <span class="nav-item-icon" aria-hidden="true">◉</span>
           <span class="nav-item-label">Places</span>
         </button>
       </li>
       <li role="listitem">
         <button class="nav-item" data-view="entity-type" data-entity-type="weblink"
                 data-label="Web Links" aria-label="Web Links">
-          <span class="nav-item-icon" aria-hidden="true">🔗</span>
+          <span class="nav-item-icon" aria-hidden="true">⊗</span>
           <span class="nav-item-label">Web Links</span>
         </button>
       </li>
@@ -371,11 +371,11 @@
     <!-- Sidebar footer: Settings + Logout -->
     <div class="sidebar-footer">
       <button class="nav-item" data-view="settings" aria-label="Settings">
-        <span class="nav-item-icon" aria-hidden="true">⚙️</span>
+        <span class="nav-item-icon" aria-hidden="true">⊙</span>
         <span class="nav-item-label">Settings</span>
       </button>
       <button class="sidebar-logout-btn" id="sidebar-logout-btn" aria-label="Sign out">
-        <span style="font-size: 1rem;" aria-hidden="true">↪</span>
+        <span style="font-size: 1rem;" aria-hidden="true">→</span>
         Sign Out
       </button>
     </div>

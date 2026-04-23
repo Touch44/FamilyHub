@@ -12,7 +12,7 @@
 'use strict';
 
 // ── Cache Names ───────────────────────────────────────────── //
-const APP_VERSION   = '2.0.4';
+const APP_VERSION   = '2.2.0';
 const CACHE_SHELL   = `fh-shell-v${APP_VERSION}`;
 const CACHE_DYNAMIC = `fh-dynamic-v${APP_VERSION}`;
 
@@ -26,10 +26,10 @@ const SHELL_FILES = [
   './',
   './index.html',
   './manifest.json',
-  './styles/tokens.css',
-  './styles/layout.css',
-  './styles/components.css',
-  './styles/dark.css',
+  './styles/tokens.css?v=2.2.0',
+  './styles/layout.css?v=2.2.0',
+  './styles/components.css?v=2.2.0',
+  './styles/dark.css?v=2.2.0',
   './core/events.js',
   './core/router.js',
   './core/db.js',

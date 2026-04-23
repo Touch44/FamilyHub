@@ -22,6 +22,8 @@ body {
   color: var(--color-text);
   background: var(--color-bg);
   line-height: var(--leading-normal);
+  letter-spacing: -0.011em;
+  font-feature-settings: "cv11", "ss01";
   overflow: hidden;
   height: 100dvh;
   width: 100vw;
@@ -389,13 +391,14 @@ body {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2-5);
+  padding: var(--space-1-5) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--color-sidebar-text);
   font-size: var(--text-sm);
   font-weight: var(--weight-regular);
+  letter-spacing: -0.005em;
   transition: background var(--transition-fast), color var(--transition-fast);
   text-decoration: none;
   user-select: none;
@@ -423,18 +426,24 @@ body {
   left: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 3px;
-  height: 60%;
+  width: 2px;
+  height: 55%;
   background: var(--color-sidebar-accent);
   border-radius: 0 2px 2px 0;
 }
 
 .nav-item-icon {
-  font-size: 1rem;
+  font-size: 0.9rem;
   line-height: 1;
   flex-shrink: 0;
-  width: 1.25rem;
+  width: 1rem;
   text-align: center;
+  opacity: 0.7;
+}
+
+.nav-item.active .nav-item-icon,
+.nav-item:hover .nav-item-icon {
+  opacity: 1;
 }
 
 .nav-item-label {
@@ -538,7 +547,17 @@ body {
   display: contents; /* children flow into #main grid */
 }
 
-/* ── Entity Panel (Blueprint §9.2 — fixed right overlay) ──── */
+/* ── Entity Panel — right side drawer (Blueprint §9.2) ──────── */
+
+/* Backdrop — lightweight for right panel */
+#entity-panel-backdrop {
+  display: none; /* right-side panel does not need a backdrop */
+}
+
+#entity-panel-backdrop.visible {
+  display: none;
+}
+
 #entity-panel {
   position: fixed;
   top: calc(var(--topbar-height) + var(--breadcrumb-height));
@@ -547,26 +566,52 @@ body {
   height: calc(100dvh - var(--topbar-height) - var(--breadcrumb-height));
   background: var(--color-bg);
   border-left: 1px solid var(--color-border);
-  box-shadow: var(--shadow-panel);
+  box-shadow: -2px 0 16px rgba(15, 23, 42, 0.06);
   z-index: var(--z-panel);
   display: flex;
   flex-direction: column;
   transform: translateX(100%);
-  transition: transform var(--transition-xslow);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.28s ease;
   overflow: hidden;
+  opacity: 1;
+  pointer-events: none;
 }
 
 #entity-panel.open {
   transform: translateX(0);
+  pointer-events: auto;
+  box-shadow: -4px 0 24px rgba(15, 23, 42, 0.10);
+}
+
+/* Graph-mode: panel is in the grid — already positioned correctly */
+#entity-panel.graph-mode {
+  position: relative;
+  top: auto;
+  right: auto;
+  transform: none;
+  width: var(--panel-width);
+  height: 100%;
+  box-shadow: none;
+  border-left: 1px solid var(--color-border);
+  opacity: 1;
+  pointer-events: auto;
+  grid-column: 3;
+  transition: none;
+}
+
+#entity-panel.graph-mode.open {
+  transform: none;
 }
 
 #entity-panel-header {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+  background: var(--color-bg);
 }
 
 #entity-panel-header-top {
@@ -592,29 +637,67 @@ body {
   white-space: nowrap;
   flex: 1;
   line-height: 1.3;
+  letter-spacing: -0.01em;
 }
 
 #entity-panel-close {
-  margin-left: auto;
   background: none;
   border: none;
-  padding: var(--space-1);
+  padding: var(--space-1-5);
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--color-text-muted);
-  font-size: 1rem;
+  font-size: 0.9rem;
+  line-height: 1;
   transition: background var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
 }
 
 #entity-panel-close:hover {
-  background: var(--color-surface);
+  background: var(--color-surface-2);
   color: var(--color-text);
+}
+
+/* Icon action buttons in the header toolbar */
+.panel-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+  text-decoration: none;
+  font-family: var(--font-body);
+}
+
+.panel-icon-btn:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.panel-icon-btn.active {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+
+.panel-icon-btn-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border);
+  flex-shrink: 0;
+  margin: 0 var(--space-0-5);
 }
 
 #entity-panel-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-4);
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
 }
@@ -623,6 +706,7 @@ body {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   animation: pulse 1.2s ease-in-out infinite;
+  letter-spacing: 0.01em;
 }
 
 @keyframes pulse {
@@ -913,12 +997,15 @@ body {
     left: 0;
     right: 0;
     width: 100%;
-    height: 70dvh;
+    height: auto;
+    max-height: 88dvh;
+    min-height: 0;
     border-left: none;
     border-top: 1px solid var(--color-border);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     box-shadow: 0 -4px 24px rgba(15, 23, 42, 0.12);
     transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   #entity-panel.open {

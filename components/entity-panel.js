@@ -85,10 +85,6 @@ export function initEntityPanel() {
     }
   });
 
-  // Backdrop click closes panel
-  const backdrop = document.getElementById('entity-panel-backdrop');
-  if (backdrop) backdrop.addEventListener('click', closePanel);
-
   // Listen for open requests from anywhere
   on(EVENTS.PANEL_OPENED, ({ entityId, entityType } = {}) => {
     if (entityId) openPanel(entityId, entityType);
@@ -355,12 +351,6 @@ export async function openPanel(entityId, entityTypeHint) {
     _panel.classList.add('open');
     _panel.setAttribute('aria-hidden', 'false');
 
-    // Show backdrop only when NOT in graph-view mode
-    if (!_graphViewActive) {
-      const backdrop = document.getElementById('entity-panel-backdrop');
-      if (backdrop) backdrop.classList.add('visible');
-    }
-
   } catch (err) {
     console.error('[entity-panel] openPanel failed:', err);
   }
@@ -381,10 +371,6 @@ export function closePanel() {
 
   _panel.classList.remove('open');
   _panel.setAttribute('aria-hidden', 'true');
-
-  // Hide backdrop
-  const backdrop = document.getElementById('entity-panel-backdrop');
-  if (backdrop) backdrop.classList.remove('visible');
 
   _entity = null;
   _config = null;
@@ -573,7 +559,8 @@ function _renderHeaderActions() {
   // Complete (tasks only)
   if (_entity.type === 'task' && _entity.status !== 'Done') {
     const btn = mkBtn('✓', 'Mark complete');
-    btn.style.color = 'var(--color-success-text, #16a34a)';
+    btn.style.color = 'var(--color-success-text, #15803d)';
+    btn.style.fontWeight = '600';
     btn.addEventListener('click', async () => {
       _entity.status = 'Done';
       await _save();
@@ -585,7 +572,7 @@ function _renderHeaderActions() {
 
   // Duplicate
   if (actions.includes('duplicate')) {
-    const btn = mkBtn('⧉', 'Duplicate');
+    const btn = mkBtn('⊕', 'Duplicate');
     btn.addEventListener('click', async () => {
       const dup = { ..._entity };
       delete dup.id;
@@ -602,7 +589,7 @@ function _renderHeaderActions() {
   // Archive
   if (actions.includes('archive') || actions.includes('edit')) {
     const isArchived = _entity.status === 'Archived' || _entity.archived;
-    const btn = mkBtn(isArchived ? '📂' : '📦', isArchived ? 'Unarchive' : 'Archive');
+    const btn = mkBtn(isArchived ? '↑' : '⊟', isArchived ? 'Unarchive' : 'Archive');
     btn.addEventListener('click', async () => {
       if (_entity.status !== undefined) {
         _entity.status = isArchived ? 'Active' : 'Archived';
@@ -618,21 +605,21 @@ function _renderHeaderActions() {
 
   // Add to Project
   if (_entity.type !== 'project') {
-    const btn = mkBtn('📁', 'Add to project');
+    const btn = mkBtn('⊛', 'Add to project');
     btn.addEventListener('click', () => _showProjectPicker());
     _headerActions.appendChild(btn);
   }
 
   // Convert
   if (actions.includes('convert')) {
-    const btn = mkBtn('↺', 'Convert to…');
+    const btn = mkBtn('⇄', 'Convert to…');
     btn.addEventListener('click', () => _showConvertDropdown());
     _headerActions.appendChild(btn);
   }
 
   // Delete
   if (actions.includes('delete')) {
-    const btn = mkBtn('🗑', 'Delete', true);
+    const btn = mkBtn('⊗', 'Delete', true);
     btn.addEventListener('click', () => _confirmDelete());
     _headerActions.appendChild(btn);
   }
@@ -768,11 +755,11 @@ const CONTENT_FIRST_TYPES = new Set([
 
 // ── View definitions (icon toolbar) ──────────────────────── //
 const VIEW_DEFS = [
-  { key: 'content',    icon: '📄', title: 'Content' },
-  { key: 'properties', icon: '⚙️', title: 'Properties' },
-  { key: 'relations',  icon: '🔗', title: 'Relations' },
-  { key: 'activity',   icon: '📋', title: 'Activity' },
-  { key: 'graph',      icon: '✦',  title: 'Graph' },
+  { key: 'content',    icon: '≡',  title: 'Content' },
+  { key: 'properties', icon: '⊞',  title: 'Properties' },
+  { key: 'relations',  icon: '⌥',  title: 'Relations' },
+  { key: 'activity',   icon: '◷',  title: 'Activity' },
+  { key: 'graph',      icon: '⬡',  title: 'Graph' },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -2532,12 +2519,8 @@ async function _openGraphView(entityId) {
   viewEl.appendChild(graphCol);
 
   // ── Ensure entity panel is open ─────────────────────────
-  // In graph mode the panel is a side column, NOT the modal — hide backdrop
-  const backdrop = document.getElementById('entity-panel-backdrop');
-  if (backdrop) backdrop.classList.remove('visible');
-
   _graphViewActive = true;
-  // Mark panel as graph-mode so CSS overrides it from modal → side panel
+  // Mark panel as graph-mode so CSS positions it in the grid column
   if (_panel) _panel.classList.add('graph-mode');
   await openPanel(entityId);
 
