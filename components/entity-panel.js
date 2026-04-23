@@ -189,92 +189,71 @@ async function _repairCorruptedTypes() {
  */
 async function _migrateDailyReviewEdges() {
   try {
-    // ── Step 1: fix Daily Review entity titles ──────────────────────
+    // ── Step 1: Fix Daily Review entity titles (YYYY-MM-DD → MM-DD-YYYY) ─
     const drEntities = await getEntitiesByType('dailyReview');
     let titleFixed = 0;
     for (const dr of drEntities) {
       if (!dr.date || dr.deleted) continue;
       const correctTitle = `Daily Review — ${_formatDateForTitle(dr.date)}`;
       if (dr.title !== correctTitle) {
-        try {
-          await saveEntity({ ...dr, title: correctTitle });
-          titleFixed++;
-        } catch { /* skip */ }
+        try { await saveEntity({ ...dr, title: correctTitle }); titleFixed++; } catch { /* skip */ }
       }
     }
     if (titleFixed > 0) {
-      console.info(`[entity-panel] [migration] Fixed ${titleFixed} Daily Review titles to MM-DD-YYYY format.`);
+      console.info(`[entity-panel] [migration] Fixed ${titleFixed} DR titles to MM-DD-YYYY.`);
     }
 
-    // ── Step 2: delete stale daily-review edges ──────────────────────
-    // Get all entities to scan their edges
-    const allEntities = await getEntitiesByType('task')
-      .then(tasks => tasks.concat([])); // start with tasks then expand
+    // ── Step 2: PURGE all daily-review edges unconditionally ─────────────
+    // We nuke every 'in daily review', 'daily review', and 'contains' edge
+    // that touches a dailyReview entity. Fresh, correct edges are recreated
+    // automatically when panels open or Daily view loads.
+    // This is the only reliable fix for stale edges from old code versions.
 
-    // Collect all entity IDs that might have stale edges
-    const typesList = ['task', 'event', 'appointment', 'note', 'post', 'dateEntity',
-                       'mealPlan', 'trip', 'idea', 'research', 'book', 'dailyReview'];
+    const allTypes = ['task','event','appointment','note','post','dateEntity',
+                      'mealPlan','trip','idea','research','book',
+                      'person','project','contact','place','weblink',
+                      'recipe','medication','shoppingItem','habit','goal','dailyReview'];
 
     let edgeDeleted = 0;
-    for (const typeName of typesList) {
+
+    for (const typeName of allTypes) {
       try {
         const entities = await getEntitiesByType(typeName);
         for (const entity of entities) {
           if (entity.deleted) continue;
 
-          // Get all outgoing edges with relation 'daily review' (old relation name)
-          const oldRelEdges = await getEdgesFrom(entity.id, 'daily review');
-          for (const edge of oldRelEdges) {
-            try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
+          // Delete ALL outgoing daily-review edges (old and new relation names)
+          for (const rel of ['daily review', 'in daily review']) {
+            const edges = await getEdgesFrom(entity.id, rel);
+            for (const edge of edges) {
+              try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
+            }
           }
 
-          // Get all outgoing edges with relation 'in daily review'
-          // and verify they point to the correct Daily Review for this entity type
-          const drEdges = await getEdgesFrom(entity.id, 'in daily review');
-          for (const edge of drEdges) {
-            try {
-              // Check the target is actually a dailyReview entity
-              const target = await getEntity(edge.toId);
-              if (!target || target.type !== 'dailyReview') {
-                await deleteEdge(edge.id);
-                edgeDeleted++;
-                continue;
-              }
-              // Verify this is the CORRECT date for this entity type
-              const correctDates = _getCorrectDatesForEntity(entity);
-              if (correctDates !== null && !correctDates.has(target.date)) {
-                // Wrong date — delete this edge (will be recreated correctly)
-                await deleteEdge(edge.id);
-                edgeDeleted++;
-              }
-            } catch { /* skip */ }
+          // Delete ALL incoming 'contains' edges from dailyReview entities
+          const inEdges = await getEdgesTo(entity.id, 'contains');
+          for (const edge of inEdges) {
+            if (edge.fromType === 'dailyReview') {
+              try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
+            }
           }
         }
       } catch { /* skip type */ }
     }
 
-    // Also delete stale 'contains' edges FROM dailyReviews that point to
-    // entities that no longer belong to that date
+    // Also sweep contains edges FROM each dailyReview entity
     for (const dr of drEntities) {
-      if (dr.deleted || !dr.date) continue;
+      if (dr.deleted) continue;
       try {
         const containsEdges = await getEdgesFrom(dr.id, 'contains');
         for (const edge of containsEdges) {
-          try {
-            const target = await getEntity(edge.toId);
-            if (!target || target.deleted) {
-              await deleteEdge(edge.id);
-              edgeDeleted++;
-            }
-            // Note: we only delete edges to deleted entities here.
-            // Valid edges are kept — _syncDailyReviewLinks handles the rest.
-          } catch { /* skip */ }
+          try { await deleteEdge(edge.id); edgeDeleted++; } catch { /* skip */ }
         }
       } catch { /* skip */ }
     }
 
     if (edgeDeleted > 0) {
-      console.info(`[entity-panel] [migration] Deleted ${edgeDeleted} stale daily-review edges. Fresh edges will be created on next panel open.`);
+      console.info(`[entity-panel] [migration] Purged ${edgeDeleted} stale daily-review edges. Fresh edges recreated on next panel open / daily view load.`);
     }
 
   } catch (err) {
@@ -1318,9 +1297,9 @@ async function _renderRelationChips(wrap, field) {
     chip.style.cssText = 'cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1);';
     chip.innerHTML = `<span>${linkedConfig?.icon || '📎'}</span> <span>${_getDisplayTitle(linked)}</span>`;
 
-    // Click to navigate
+    // Click to navigate — smart: dailyReview → exact date, task → kanban+panel
     chip.addEventListener('click', () => {
-      openPanel(linked.id);
+      _navigateToLinkedEntity(linked);
     });
 
     // Remove button
@@ -2284,7 +2263,7 @@ async function _renderGraphTab(container) {
       `;
       row.addEventListener('mouseenter', () => { row.style.background = 'var(--color-surface-2)'; });
       row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
-      row.addEventListener('click', () => openPanel(entity.id));
+      row.addEventListener('click', () => _navigateToLinkedEntity(entity));
       legend.appendChild(row);
     }
 
