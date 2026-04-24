@@ -45,9 +45,9 @@ let _dragVx      = 0;
 let _dragVy      = 0;
 let _wPh         = 0;
 
-let _panStart    = null;   // { mx, my, ox, oy } for background pan
-let _mouseDownPos = null;  // { x, y } screen coords at mousedown — for click vs drag detection
-let _didDrag     = false;  // true if mouse moved > DRAG_THRESHOLD px since mousedown
+let _panStart     = null;   // { mx, my, ox, oy } for background pan
+let _mouseDownPos = null;   // { x, y } screen coords at mousedown
+let _didDrag      = false;  // true if mouse moved > DRAG_THRESHOLD while dragging a node
 let _rafId       = null;
 let _frameCount  = 0;
 let _physicsRunning = false;
@@ -868,12 +868,13 @@ function _handleMouseMove(e) {
 
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
 
-  // Detect if this is a real drag vs a micro-movement
-  const DRAG_THRESHOLD = 5; // px
-  if (_mouseDownPos && !_didDrag) {
+  // Track whether the mouse has moved enough to count as a drag vs a click.
+  // Only mark _didDrag when mousedown was on a node (dragNode set).
+  // Uses a generous 12px threshold to tolerate normal hand tremor on clicks.
+  if (_dragNode && _mouseDownPos && !_didDrag) {
     const dx = Math.abs(e.clientX - _mouseDownPos.x);
     const dy = Math.abs(e.clientY - _mouseDownPos.y);
-    if (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD) {
+    if (dx > 12 || dy > 12) {
       _didDrag = true;
     }
   }
