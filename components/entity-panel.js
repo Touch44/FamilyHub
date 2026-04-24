@@ -451,7 +451,6 @@ function _renderHeader() {
     btn.textContent = view.icon;
     btn.addEventListener('click', () => {
       _activeTab = view.key;
-      // Update all icon button active states
       toolbar.querySelectorAll('.panel-icon-btn[data-view]').forEach(b => {
         b.classList.toggle('active', b.dataset.view === view.key);
       });
@@ -459,6 +458,17 @@ function _renderHeader() {
     });
     toolbar.appendChild(btn);
   }
+
+  // ── Graph: direct-action button (opens graph view immediately) ──
+  const graphBtn = document.createElement('button');
+  graphBtn.className = 'panel-icon-btn';
+  graphBtn.title = 'Open Graph';
+  graphBtn.setAttribute('aria-label', 'Open Graph');
+  graphBtn.textContent = '◎';
+  graphBtn.addEventListener('click', () => {
+    if (_entity?.id) _openGraphView(_entity.id);
+  });
+  toolbar.appendChild(graphBtn);
 
   // Separator before close
   const sep2 = document.createElement('div');
@@ -754,12 +764,12 @@ const CONTENT_FIRST_TYPES = new Set([
 ]);
 
 // ── View definitions (icon toolbar) ──────────────────────── //
+// 'graph' is NOT in this list — it gets its own direct-action button below
 const VIEW_DEFS = [
   { key: 'content',    icon: '≡',  title: 'Content' },
   { key: 'properties', icon: '⊞',  title: 'Properties' },
   { key: 'relations',  icon: '⌥',  title: 'Relations' },
   { key: 'activity',   icon: '◷',  title: 'Activity' },
-  { key: 'graph',      icon: '⬡',  title: 'Graph' },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -793,7 +803,6 @@ function _renderActiveTab() {
     case 'properties': _renderPropertiesTab(container);  break;
     case 'relations':  _renderRelationsTab(container);   break;
     case 'activity':   _renderActivityTab(container);    break;
-    case 'graph':      _renderGraphTab(container);       break;
     default:           _renderPropertiesTab(container);  break;
   }
 }
@@ -2319,86 +2328,6 @@ async function _renderActivityTab(container) {
 // ════════════════════════════════════════════════════════════
 // GRAPH VIEW — side-by-side: graph (left) + entity panel (right)
 // ════════════════════════════════════════════════════════════
-
-/**
- * Graph tab renders a prompt + button to launch the full side-by-side
- * graph view, or shows a connection summary if already in graph mode.
- */
-async function _renderGraphTab(container) {
-  if (!_entity) return;
-
-  try {
-    const neighbors = await getNeighbors(_entity.id);
-    container.innerHTML = '';
-
-    // ── Connection summary header ──────────────────────────
-    const header = document.createElement('div');
-    header.style.cssText = 'text-align: center; padding: var(--space-3) 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-xs);';
-    header.textContent = `${neighbors.length} connection${neighbors.length !== 1 ? 's' : ''}`;
-    container.appendChild(header);
-
-    if (neighbors.length === 0) {
-      container.innerHTML += `
-        <div class="empty-state" style="padding: var(--space-8);">
-          <div class="empty-state-icon">🕸️</div>
-          <div class="empty-state-title">No connections</div>
-          <div class="empty-state-desc">Link this ${_config.label.toLowerCase()} to other entities to see its graph.</div>
-        </div>
-      `;
-      return;
-    }
-
-    // ── Launch button ────────────────────────────────────────
-    const launchBtn = document.createElement('button');
-    launchBtn.className = 'btn btn-primary w-full';
-    launchBtn.style.cssText = 'margin: var(--space-3) 0; display: flex; align-items: center; justify-content: center; gap: var(--space-2);';
-    launchBtn.innerHTML = '<span>🔮</span><span>Open Graph View</span>';
-    launchBtn.addEventListener('click', () => _openGraphView(_entity.id));
-    container.appendChild(launchBtn);
-
-    // ── Legend list ───────────────────────────────────────────
-    const legend = document.createElement('div');
-    legend.style.cssText = 'display: flex; flex-direction: column; gap: var(--space-1); padding-top: var(--space-2);';
-
-    const count = Math.min(neighbors.length, 12);
-    for (let i = 0; i < count; i++) {
-      const neighbor = neighbors[i];
-      const entity   = await getEntity(neighbor.entityId);
-      if (!entity || entity.deleted) continue;
-
-      const nConfig = getEntityTypeConfig(entity.type);
-      const row = document.createElement('div');
-      row.style.cssText = `
-        display: flex; align-items: center; gap: var(--space-2);
-        padding: var(--space-1-5) var(--space-2); border-radius: var(--radius-sm);
-        cursor: pointer; font-size: var(--text-xs);
-        transition: background var(--transition-fast);
-      `;
-      row.innerHTML = `
-        <span style="width: 10px; height: 10px; border-radius: var(--radius-full); background: ${nConfig?.color || '#94A3B8'}; flex-shrink: 0;"></span>
-        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${_getDisplayTitle(entity)}</span>
-        <span style="color: var(--color-text-muted);">${nConfig?.label || entity.type}</span>
-      `;
-      row.addEventListener('mouseenter', () => { row.style.background = 'var(--color-surface-2)'; });
-      row.addEventListener('mouseleave', () => { row.style.background = 'none'; });
-      row.addEventListener('click', () => _navigateToLinkedEntity(entity));
-      legend.appendChild(row);
-    }
-
-    if (neighbors.length > 12) {
-      const more = document.createElement('div');
-      more.style.cssText = 'font-size: var(--text-xs); color: var(--color-text-muted); padding: var(--space-2); text-align: center;';
-      more.textContent = `+ ${neighbors.length - 12} more connections`;
-      legend.appendChild(more);
-    }
-
-    container.appendChild(legend);
-
-  } catch (err) {
-    console.error('[entity-panel] Graph tab error:', err);
-    container.innerHTML = '<div style="color: var(--color-danger); font-size: var(--text-sm); padding: var(--space-4);">Failed to load graph.</div>';
-  }
-}
 
 /**
  * Open the full side-by-side graph view.
