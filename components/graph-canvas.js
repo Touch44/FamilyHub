@@ -742,8 +742,8 @@ function _wireListeners() {
   _onResize     = _resizeCanvas.bind(null);
 
   _canvas.addEventListener('mousedown',  _onMouseDown);
-  _canvas.addEventListener('mousemove',  _onMouseMove);
-  _canvas.addEventListener('mouseup',    _onMouseUp);
+  window.addEventListener('mousemove',   _onMouseMove);  // window — smooth drag outside canvas
+  window.addEventListener('mouseup',     _onMouseUp);    // window — catches mouseup outside canvas
   _canvas.addEventListener('wheel',      _onWheel, { passive: false });
   _canvas.addEventListener('touchstart', _onTouchStart, { passive: false });
   _canvas.addEventListener('touchmove',  _onTouchMove,  { passive: false });
@@ -761,15 +761,15 @@ function _wireListeners() {
 function _unwireListeners() {
   if (_canvas) {
     _canvas.removeEventListener('mousedown',  _onMouseDown);
-    _canvas.removeEventListener('mousemove',  _onMouseMove);
-    _canvas.removeEventListener('mouseup',    _onMouseUp);
     _canvas.removeEventListener('wheel',      _onWheel);
     _canvas.removeEventListener('touchstart', _onTouchStart);
     _canvas.removeEventListener('touchmove',  _onTouchMove);
     _canvas.removeEventListener('touchend',   _onTouchEnd);
   }
 
-  window.removeEventListener('resize', _onResize);
+  window.removeEventListener('mousemove', _onMouseMove);  // moved to window
+  window.removeEventListener('mouseup',   _onMouseUp);    // moved to window
+  window.removeEventListener('resize',    _onResize);
 
   if (_unsubEntitySaved)   _unsubEntitySaved();
   if (_unsubEntityDeleted) _unsubEntityDeleted();
@@ -873,8 +873,7 @@ function _handleMouseMove(e) {
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
 
   // Track whether the mouse has moved enough to count as a drag vs a click.
-  // Only mark _didDrag when mousedown was on a node (dragNode set).
-  // Uses a generous 12px threshold to tolerate normal hand tremor on clicks.
+  // Only mark _didDrag when dragging a node (dragNode set).
   if (_dragNode && _mouseDownPos && !_didDrag) {
     const dx = Math.abs(e.clientX - _mouseDownPos.x);
     const dy = Math.abs(e.clientY - _mouseDownPos.y);
@@ -944,18 +943,32 @@ function _handleMouseMove(e) {
     return;
   }
 
-  // Hover detection
-  const node = _nodeAt(x, y);
-  const newHoverId = node ? node.id : null;
-  if (newHoverId !== _hoverId) {
-    _hoverId = newHoverId;
-    _canvas.style.cursor = newHoverId ? 'pointer' : 'default';
-    _render();
+  // Hover detection — only when not dragging and cursor is over the canvas
+  if (!_isDragging && !_panStart) {
+    const rect = _canvas.getBoundingClientRect();
+    const overCanvas = e.clientX >= rect.left && e.clientX <= rect.right &&
+                       e.clientY >= rect.top  && e.clientY <= rect.bottom;
+    if (overCanvas) {
+      const node = _nodeAt(x, y);
+      const newHoverId = node ? node.id : null;
+      if (newHoverId !== _hoverId) {
+        _hoverId = newHoverId;
+        _canvas.style.cursor = newHoverId ? 'pointer' : 'default';
+        _render();
+      }
+    } else if (_hoverId) {
+      // Cursor left canvas — clear hover
+      _hoverId = null;
+      _canvas.style.cursor = 'default';
+      _render();
+    }
   }
 }
 
 function _handleMouseUp(e) {
   if (!_canvas) return;
+  // Only process if this mouseup corresponds to a mousedown on the canvas
+  if (!_mouseDownPos && !_isDragging && !_panStart) return;
 
   if (_isDragging && _dragNode) {
     // ── On mouseup: dragNode.vx = _dragVx × 4.5 → restart physics ──
