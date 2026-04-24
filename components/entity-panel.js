@@ -465,6 +465,7 @@ function _renderHeader() {
   graphBtn.title = 'Open Graph';
   graphBtn.setAttribute('aria-label', 'Open Graph');
   graphBtn.textContent = '◎';
+  graphBtn.style.cssText = 'color: var(--color-accent); font-size: 1rem;';
   graphBtn.addEventListener('click', () => {
     if (_entity?.id) _openGraphView(_entity.id);
   });
@@ -566,7 +567,7 @@ function _renderHeaderActions() {
     return btn;
   };
 
-  // Complete (tasks only)
+  // ── PRIMARY: Complete (tasks only) ──────────────────────
   if (_entity.type === 'task' && _entity.status !== 'Done') {
     const btn = mkBtn('✓', 'Mark complete');
     btn.style.color = 'var(--color-success-text, #15803d)';
@@ -580,23 +581,7 @@ function _renderHeaderActions() {
     _headerActions.appendChild(btn);
   }
 
-  // Duplicate
-  if (actions.includes('duplicate')) {
-    const btn = mkBtn('⊕', 'Duplicate');
-    btn.addEventListener('click', async () => {
-      const dup = { ..._entity };
-      delete dup.id;
-      delete dup.createdAt;
-      delete dup.updatedAt;
-      const titleK = _getTitleKey(dup.type);
-      if (titleK && dup[titleK]) dup[titleK] += ' (copy)';
-      const saved = await saveEntity(dup);
-      openPanel(saved.id);
-    });
-    _headerActions.appendChild(btn);
-  }
-
-  // Archive
+  // ── PRIMARY: Archive / Unarchive ────────────────────────
   if (actions.includes('archive') || actions.includes('edit')) {
     const isArchived = _entity.status === 'Archived' || _entity.archived;
     const btn = mkBtn(isArchived ? '↑' : '⊟', isArchived ? 'Unarchive' : 'Archive');
@@ -613,26 +598,73 @@ function _renderHeaderActions() {
     _headerActions.appendChild(btn);
   }
 
-  // Add to Project
-  if (_entity.type !== 'project') {
-    const btn = mkBtn('⊛', 'Add to project');
-    btn.addEventListener('click', () => _showProjectPicker());
-    _headerActions.appendChild(btn);
-  }
-
-  // Convert
-  if (actions.includes('convert')) {
-    const btn = mkBtn('⇄', 'Convert to…');
-    btn.addEventListener('click', () => _showConvertDropdown());
-    _headerActions.appendChild(btn);
-  }
-
-  // Delete
+  // ── PRIMARY: Delete ─────────────────────────────────────
   if (actions.includes('delete')) {
     const btn = mkBtn('⊗', 'Delete', true);
     btn.addEventListener('click', () => _confirmDelete());
     _headerActions.appendChild(btn);
   }
+
+  // ── OVERFLOW MENU: Duplicate · Add to Project · Convert ─
+  const overflowItems = [];
+  if (actions.includes('duplicate'))     overflowItems.push({ label: 'Duplicate',       fn: _duplicateEntity });
+  if (_entity.type !== 'project')        overflowItems.push({ label: 'Add to Project',  fn: _showProjectPicker });
+  if (actions.includes('convert'))       overflowItems.push({ label: 'Convert to…',     fn: _showConvertDropdown });
+
+  if (overflowItems.length > 0) {
+    const moreBtn = mkBtn('···', 'More actions');
+    moreBtn.style.cssText = 'letter-spacing: -1px; font-size: 0.7rem; position: relative;';
+    let _menu = null;
+
+    moreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_menu && document.contains(_menu)) { _menu.remove(); _menu = null; return; }
+
+      _menu = document.createElement('div');
+      _menu.style.cssText = `
+        position: absolute; top: calc(100% + 4px); right: 0; z-index: 999;
+        background: var(--color-bg); border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+        padding: var(--space-1); min-width: 160px;
+      `;
+      for (const item of overflowItems) {
+        const row = document.createElement('button');
+        row.style.cssText = `
+          display: block; width: 100%; text-align: left;
+          padding: var(--space-1-5) var(--space-3); border: none; background: none;
+          font-size: var(--text-sm); color: var(--color-text); cursor: pointer;
+          border-radius: var(--radius-sm);
+        `;
+        row.textContent = item.label;
+        row.addEventListener('mouseenter', () => row.style.background = 'var(--color-surface-2)');
+        row.addEventListener('mouseleave', () => row.style.background = 'none');
+        row.addEventListener('click', () => { _menu?.remove(); _menu = null; item.fn(); });
+        _menu.appendChild(row);
+      }
+
+      // Append directly to moreBtn (which is position:relative)
+      moreBtn.appendChild(_menu);
+
+      const close = (ev) => {
+        if (!_menu?.contains(ev.target) && ev.target !== moreBtn) {
+          _menu?.remove(); _menu = null;
+          document.removeEventListener('click', close);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    });
+    _headerActions.appendChild(moreBtn);
+  }
+}
+
+async function _duplicateEntity() {
+  if (!_entity) return;
+  const dup = { ..._entity };
+  delete dup.id; delete dup.createdAt; delete dup.updatedAt;
+  const titleK = _getTitleKey(dup.type);
+  if (titleK && dup[titleK]) dup[titleK] += ' (copy)';
+  const saved = await saveEntity(dup);
+  openPanel(saved.id);
 }
 
 /** Show a dropdown to pick a project and link this entity to it */
@@ -2582,9 +2614,11 @@ function _buildGraphTypeFilters() {
  * When a node is single-clicked in graph mode, update the panel to show
  * that entity's properties — but do NOT drill down or navigate away.
  */
+/**
+ * Single-click on graph node → update panel to show that entity.
+ */
 function _handleGraphNodeSelected(id) {
   if (!_graphViewActive || !id) return;
-  // Update panel to this entity, keep on properties tab
   openPanel(id).then(() => {
     _activeTab = 'properties';
     _renderActiveTab();
@@ -2592,14 +2626,30 @@ function _handleGraphNodeSelected(id) {
 }
 
 /**
- * When a node is double-clicked (focus drilled), update the panel too.
+ * Double-click on graph node → toggle panel detail:
+ * - Panel closed or showing different entity → open/replace with this entity
+ * - Panel showing THIS entity → clear panel content (stay in graph mode)
  */
 function _handleGraphNodeFocused(id) {
   if (!_graphViewActive || !id) return;
-  openPanel(id).then(() => {
-    _activeTab = 'properties';
-    _renderActiveTab();
-  });
+
+  const panelIsOpen = _panel?.classList.contains('open');
+  const sameEntity  = panelIsOpen && _entity?.id === id;
+
+  if (sameEntity) {
+    // Collapse panel content but stay in graph mode — clear body, keep panel visible
+    _entity = null;
+    _config = null;
+    if (_panelBody) _panelBody.innerHTML = '';
+    const headerEl = document.getElementById('entity-panel-header');
+    if (headerEl) headerEl.innerHTML = '';
+    // Keep .open and .graph-mode classes intact — panel column stays in layout
+  } else {
+    openPanel(id).then(() => {
+      _activeTab = 'properties';
+      _renderActiveTab();
+    });
+  }
 }
 
 
