@@ -957,8 +957,6 @@ function _handleMouseUp(e) {
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
   const node = _nodeAt(x, y);
 
-  console.log('[graph-canvas] mouseup — node:', node?.id || 'none', '_lastClickId:', _lastClickId, 'delta:', node ? Date.now() - _lastClickTime : '-');
-
   if (node) {
     const now = Date.now();
 

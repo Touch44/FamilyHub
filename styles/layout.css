@@ -531,13 +531,6 @@ body {
 }
 
 /* ── Graph View: 3-column layout (Blueprint §9.2) ─────────── */
-#main.graph-active {
-  display: grid;
-  grid-template-columns: var(--graph-filter-width) 1fr var(--panel-width);
-  overflow: hidden;
-  padding: 0;
-}
-
 #view-graph {
   display: none; /* overridden when active */
   padding: 0;
@@ -584,24 +577,33 @@ body {
   box-shadow: -4px 0 24px rgba(15, 23, 42, 0.10);
 }
 
-/* Graph-mode: panel is in the grid — already positioned correctly */
+/* Graph-mode: panel stays fixed but shown at right edge, overlapping graph canvas */
 #entity-panel.graph-mode {
-  position: relative;
-  top: auto;
-  right: auto;
-  transform: none;
+  position: fixed;
+  top: calc(var(--topbar-height) + var(--breadcrumb-height));
+  right: 0;
+  transform: translateX(0);   /* always visible in graph mode — no slide */
   width: var(--panel-width);
-  height: 100%;
-  box-shadow: none;
+  height: calc(100dvh - var(--topbar-height) - var(--breadcrumb-height));
+  box-shadow: -4px 0 24px rgba(15, 23, 42, 0.10);
   border-left: 1px solid var(--color-border);
   opacity: 1;
   pointer-events: auto;
-  grid-column: 3;
   transition: none;
+  z-index: var(--z-panel);
 }
 
 #entity-panel.graph-mode.open {
-  transform: none;
+  transform: translateX(0);
+}
+
+/* Shrink the graph canvas column to leave room for the panel */
+#main.graph-active {
+  display: grid;
+  grid-template-columns: 1fr;
+  overflow: hidden;
+  padding: 0;
+  padding-right: var(--panel-width);  /* reserve space so graph doesn't go under panel */
 }
 
 #entity-panel-header {
@@ -1026,6 +1028,7 @@ body {
 
   #main.graph-active {
     display: block;
+    padding-right: 0;  /* panel is a bottom sheet on mobile, no right padding needed */
   }
 
   #view-graph.active {
