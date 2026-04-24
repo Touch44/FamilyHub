@@ -801,8 +801,14 @@ function _openNoteModal(entity) {
     animation: modalIn 0.18s cubic-bezier(0.4,0,0.2,1) both;
   `;
 
+  // onEsc declared with let so closeModal can reference it before onEsc is assigned
+  let onEsc;
+  // _debounce declared here so closeModal can cancel a pending save on close
+  let _debounce = null;
+
   // Centralised close — removes overlay AND cleans up the Esc listener
   const closeModal = () => {
+    clearTimeout(_debounce);
     overlay.remove();
     document.removeEventListener('keydown', onEsc);
   };
@@ -893,7 +899,6 @@ function _openNoteModal(entity) {
   `;
   editor.innerHTML = entity.body || '';
 
-  let _debounce = null;
   const doSave = async () => {
     entity.body = editor.innerHTML;
     try { await saveEntity(entity); } catch (e) { console.warn('[daily-modal] save failed', e); }
@@ -917,8 +922,8 @@ function _openNoteModal(entity) {
   // Close on overlay click (outside modal card)
   overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 
-  // Close on Esc — defined here so closeModal can reference it
-  const onEsc = e => { if (e.key === 'Escape') closeModal(); };
+  // Assign onEsc handler (declared as let above so closeModal can reference it)
+  onEsc = e => { if (e.key === 'Escape') closeModal(); };
   document.addEventListener('keydown', onEsc);
 
   // Focus editor

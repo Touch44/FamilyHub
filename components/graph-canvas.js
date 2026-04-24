@@ -46,6 +46,8 @@ let _dragVy      = 0;
 let _wPh         = 0;
 
 let _panStart    = null;   // { mx, my, ox, oy } for background pan
+let _mouseDownPos = null;  // { x, y } screen coords at mousedown — for click vs drag detection
+let _didDrag     = false;  // true if mouse moved > DRAG_THRESHOLD px since mousedown
 let _rafId       = null;
 let _frameCount  = 0;
 let _physicsRunning = false;
@@ -829,6 +831,10 @@ function _handleMouseDown(e) {
 
   const { x, y, screenX, screenY } = _screenToGraph(e.clientX, e.clientY);
 
+  // Track mousedown position for click vs drag detection
+  _mouseDownPos = { x: e.clientX, y: e.clientY };
+  _didDrag = false;
+
   // Check focus mode buttons first
   const btn = _hitFocusBtn(screenX, screenY);
   if (btn === 'back') {
@@ -861,6 +867,16 @@ function _handleMouseMove(e) {
   if (!_canvas) return;
 
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
+
+  // Detect if this is a real drag vs a micro-movement
+  const DRAG_THRESHOLD = 5; // px
+  if (_mouseDownPos && !_didDrag) {
+    const dx = Math.abs(e.clientX - _mouseDownPos.x);
+    const dy = Math.abs(e.clientY - _mouseDownPos.y);
+    if (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD) {
+      _didDrag = true;
+    }
+  }
 
   if (_panStart) {
     // Background pan
@@ -951,6 +967,15 @@ function _handleMouseUp(e) {
 
   _canvas.style.cursor = 'default';
 
+  // Skip click detection if the mouse moved significantly (it was a drag, not a click)
+  if (_didDrag) {
+    _didDrag = false;
+    _mouseDownPos = null;
+    return;
+  }
+  _didDrag = false;
+  _mouseDownPos = null;
+
   // Handle click (select) and double-click (focus)
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
   const node = _nodeAt(x, y);
@@ -960,17 +985,17 @@ function _handleMouseUp(e) {
 
     // Double-click detection (< 350ms, same node)
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
-      // Double-click → focus mode + notify listeners
-      setFocusId(node.id);
+      // Double-click → toggle entity panel only (do NOT re-focus graph)
+      // The panel handler (_handleGraphNodeFocused) opens or closes the panel.
       emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
       return;
     }
 
-    // Single click → select
-    _selectedId  = node.id;
-    _lastClickId = node.id;
+    // Single click → select node visually + open entity panel
+    _selectedId    = node.id;
+    _lastClickId   = node.id;
     _lastClickTime = now;
     emit('graph:nodeSelected', { id: node.id, type: node.type });
     _render();
@@ -1152,13 +1177,13 @@ function _handleTouchEnd(e) {
     _panStart = null;
   }
 
-  // Touch-tap → select / double-tap → focus
+  // Touch-tap → select / double-tap → toggle panel (same as mouse double-click)
   const { x, y } = _screenToGraph(touch.clientX, touch.clientY);
   const node = _nodeAt(x, y);
   if (node) {
     const now = Date.now();
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
-      setFocusId(node.id);
+      // Double-tap → toggle entity panel only (do NOT re-focus graph)
       emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;

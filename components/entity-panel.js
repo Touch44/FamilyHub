@@ -20,6 +20,7 @@ import { navigate, VIEW_KEYS } from '../core/router.js';
 // ── Graph view state ──────────────────────────────────────── //
 let _graphViewActive = false;
 let _graphPreviousView = null;   // viewKey to restore on exit
+let _graphPanelEntityId = null;  // tracks which entity is showing in the panel during graph mode
 let _graphTypeFilters = new Set(); // entity types currently shown in graph
 
 // ── Entity type → native view mapping ─────────────────────── //
@@ -892,18 +893,25 @@ function _renderContentView(container) {
     document.head.appendChild(editorStyle);
   }
 
+  // Capture snapshot of entity and field key at render time to prevent stale closure
+  const _capturedEntity     = _entity;
+  const _capturedFieldKey   = contentField.key;
+
   let _saveDebounce = null;
   const schedSave = () => {
     clearTimeout(_saveDebounce);
     _saveDebounce = setTimeout(async () => {
-      _entity[contentField.key] = editor.innerHTML;
+      // Only save if panel still shows the same entity
+      if (_entity !== _capturedEntity) return;
+      _capturedEntity[_capturedFieldKey] = editor.innerHTML;
       await _save();
     }, 800);
   };
   editor.addEventListener('input', schedSave);
   editor.addEventListener('blur', async () => {
     clearTimeout(_saveDebounce);
-    _entity[contentField.key] = editor.innerHTML;
+    if (_entity !== _capturedEntity) return;
+    _capturedEntity[_capturedFieldKey] = editor.innerHTML;
     await _save();
   });
 
@@ -2484,6 +2492,8 @@ async function _openGraphView(entityId) {
   // Mark panel as graph-mode so CSS positions it in the grid column
   if (_panel) _panel.classList.add('graph-mode');
   await openPanel(entityId);
+  // Track which entity is in the panel so double-click toggle works from first click
+  _graphPanelEntityId = entityId;
 
   // ── Force panel to properties tab in graph mode ─────────
   _activeTab = 'properties';
@@ -2535,7 +2545,8 @@ function _closeGraphView() {
     el.classList.toggle('active', el.dataset.view === _graphPreviousView);
   });
 
-  _graphPreviousView = null;
+  _graphPreviousView  = null;
+  _graphPanelEntityId = null;
   closePanel();
 
   console.log('[entity-panel] [minor] Graph view closed.');
@@ -2615,10 +2626,11 @@ function _buildGraphTypeFilters() {
  * that entity's properties — but do NOT drill down or navigate away.
  */
 /**
- * Single-click on graph node → update panel to show that entity.
+ * Single-click on graph node → open entity panel for that node.
  */
 function _handleGraphNodeSelected(id) {
   if (!_graphViewActive || !id) return;
+  _graphPanelEntityId = id;
   openPanel(id).then(() => {
     _activeTab = 'properties';
     _renderActiveTab();
@@ -2626,25 +2638,27 @@ function _handleGraphNodeSelected(id) {
 }
 
 /**
- * Double-click on graph node → toggle panel detail:
- * - Panel closed or showing different entity → open/replace with this entity
- * - Panel showing THIS entity → clear panel content (stay in graph mode)
+ * Double-click on graph node → toggle entity panel:
+ * - If panel is showing THIS entity → collapse panel content (stay in graph)
+ * - If panel is empty or showing a DIFFERENT entity → open/replace with this entity
  */
 function _handleGraphNodeFocused(id) {
   if (!_graphViewActive || !id) return;
 
   const panelIsOpen = _panel?.classList.contains('open');
-  const sameEntity  = panelIsOpen && _entity?.id === id;
+  const sameEntity  = panelIsOpen && _graphPanelEntityId === id;
 
   if (sameEntity) {
-    // Collapse panel content but stay in graph mode — clear body, keep panel visible
+    // Collapse panel content but stay in graph mode
+    _graphPanelEntityId = null;
     _entity = null;
     _config = null;
     if (_panelBody) _panelBody.innerHTML = '';
     const headerEl = document.getElementById('entity-panel-header');
     if (headerEl) headerEl.innerHTML = '';
-    // Keep .open and .graph-mode classes intact — panel column stays in layout
+    // Keep .open and .graph-mode so panel column stays in layout
   } else {
+    _graphPanelEntityId = id;
     openPanel(id).then(() => {
       _activeTab = 'properties';
       _renderActiveTab();
