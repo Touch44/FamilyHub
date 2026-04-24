@@ -2638,9 +2638,8 @@ function _handleGraphNodeSelected(id) {
 }
 
 /**
- * Double-click on graph node → toggle entity panel:
- * - If panel is showing THIS entity → collapse panel content (stay in graph)
- * - If panel is empty or showing a DIFFERENT entity → open/replace with this entity
+ * Double-click on graph node → toggle panel:
+ * same entity = collapse, different/empty = open.
  */
 function _handleGraphNodeFocused(id) {
   if (!_graphViewActive || !id) return;
@@ -2649,14 +2648,12 @@ function _handleGraphNodeFocused(id) {
   const sameEntity  = panelIsOpen && _graphPanelEntityId === id;
 
   if (sameEntity) {
-    // Collapse panel content but stay in graph mode
     _graphPanelEntityId = null;
     _entity = null;
     _config = null;
     if (_panelBody) _panelBody.innerHTML = '';
     const headerEl = document.getElementById('entity-panel-header');
     if (headerEl) headerEl.innerHTML = '';
-    // Keep .open and .graph-mode so panel column stays in layout
   } else {
     _graphPanelEntityId = id;
     openPanel(id).then(() => {

@@ -45,10 +45,7 @@ let _dragVx      = 0;
 let _dragVy      = 0;
 let _wPh         = 0;
 
-let _panStart     = null;   // { mx, my, ox, oy } for background pan
-let _mouseDownPos = null;   // { x, y } screen coords at mousedown
-let _mouseDownNode = null;  // node that was under cursor at mousedown (for double-click)
-let _didDrag      = false;  // true if mouse moved > 12px while holding a node
+let _panStart    = null;   // { mx, my, ox, oy } for background pan
 let _rafId       = null;
 let _frameCount  = 0;
 let _physicsRunning = false;
@@ -742,8 +739,8 @@ function _wireListeners() {
   _onResize     = _resizeCanvas.bind(null);
 
   _canvas.addEventListener('mousedown',  _onMouseDown);
-  window.addEventListener('mousemove',   _onMouseMove);  // window — smooth drag outside canvas
-  window.addEventListener('mouseup',     _onMouseUp);    // window — catches mouseup outside canvas
+  _canvas.addEventListener('mousemove',  _onMouseMove);
+  _canvas.addEventListener('mouseup',    _onMouseUp);
   _canvas.addEventListener('wheel',      _onWheel, { passive: false });
   _canvas.addEventListener('touchstart', _onTouchStart, { passive: false });
   _canvas.addEventListener('touchmove',  _onTouchMove,  { passive: false });
@@ -761,15 +758,15 @@ function _wireListeners() {
 function _unwireListeners() {
   if (_canvas) {
     _canvas.removeEventListener('mousedown',  _onMouseDown);
+    _canvas.removeEventListener('mousemove',  _onMouseMove);
+    _canvas.removeEventListener('mouseup',    _onMouseUp);
     _canvas.removeEventListener('wheel',      _onWheel);
     _canvas.removeEventListener('touchstart', _onTouchStart);
     _canvas.removeEventListener('touchmove',  _onTouchMove);
     _canvas.removeEventListener('touchend',   _onTouchEnd);
   }
 
-  window.removeEventListener('mousemove', _onMouseMove);  // moved to window
-  window.removeEventListener('mouseup',   _onMouseUp);    // moved to window
-  window.removeEventListener('resize',    _onResize);
+  window.removeEventListener('resize', _onResize);
 
   if (_unsubEntitySaved)   _unsubEntitySaved();
   if (_unsubEntityDeleted) _unsubEntityDeleted();
@@ -832,10 +829,6 @@ function _handleMouseDown(e) {
 
   const { x, y, screenX, screenY } = _screenToGraph(e.clientX, e.clientY);
 
-  // Track mousedown position for click vs drag detection
-  _mouseDownPos = { x: e.clientX, y: e.clientY };
-  _didDrag = false;
-
   // Check focus mode buttons first
   const btn = _hitFocusBtn(screenX, screenY);
   if (btn === 'back') {
@@ -848,9 +841,6 @@ function _handleMouseDown(e) {
   }
 
   const node = _nodeAt(x, y);
-
-  // Capture the node under cursor NOW (before physics moves it) for reliable double-click detection
-  _mouseDownNode = node || null;
 
   if (node) {
     // Start dragging a node
@@ -871,16 +861,6 @@ function _handleMouseMove(e) {
   if (!_canvas) return;
 
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
-
-  // Track whether the mouse has moved enough to count as a drag vs a click.
-  // Only mark _didDrag when dragging a node (dragNode set).
-  if (_dragNode && _mouseDownPos && !_didDrag) {
-    const dx = Math.abs(e.clientX - _mouseDownPos.x);
-    const dy = Math.abs(e.clientY - _mouseDownPos.y);
-    if (dx > 12 || dy > 12) {
-      _didDrag = true;
-    }
-  }
 
   if (_panStart) {
     // Background pan
@@ -943,32 +923,18 @@ function _handleMouseMove(e) {
     return;
   }
 
-  // Hover detection — only when not dragging and cursor is over the canvas
-  if (!_isDragging && !_panStart) {
-    const rect = _canvas.getBoundingClientRect();
-    const overCanvas = e.clientX >= rect.left && e.clientX <= rect.right &&
-                       e.clientY >= rect.top  && e.clientY <= rect.bottom;
-    if (overCanvas) {
-      const node = _nodeAt(x, y);
-      const newHoverId = node ? node.id : null;
-      if (newHoverId !== _hoverId) {
-        _hoverId = newHoverId;
-        _canvas.style.cursor = newHoverId ? 'pointer' : 'default';
-        _render();
-      }
-    } else if (_hoverId) {
-      // Cursor left canvas — clear hover
-      _hoverId = null;
-      _canvas.style.cursor = 'default';
-      _render();
-    }
+  // Hover detection
+  const node = _nodeAt(x, y);
+  const newHoverId = node ? node.id : null;
+  if (newHoverId !== _hoverId) {
+    _hoverId = newHoverId;
+    _canvas.style.cursor = newHoverId ? 'pointer' : 'default';
+    _render();
   }
 }
 
 function _handleMouseUp(e) {
   if (!_canvas) return;
-  // Only process if this mouseup corresponds to a mousedown on the canvas
-  if (!_mouseDownPos && !_isDragging && !_panStart) return;
 
   if (_isDragging && _dragNode) {
     // ── On mouseup: dragNode.vx = _dragVx × 4.5 → restart physics ──
@@ -985,35 +951,25 @@ function _handleMouseUp(e) {
 
   _canvas.style.cursor = 'default';
 
-  // Skip click detection if the mouse moved significantly (it was a drag, not a click)
-  if (_didDrag) {
-    _didDrag       = false;
-    _mouseDownPos  = null;
-    _mouseDownNode = null;
-    return;
-  }
-  _didDrag       = false;
-  _mouseDownPos  = null;
-
-  // Use the node captured at mousedown — physics may have moved nodes since then
-  // so re-running _nodeAt(e.clientX, e.clientY) would be unreliable.
-  const node = _mouseDownNode;
-  _mouseDownNode = null;
+  // Handle click (select) and double-click (focus)
+  const { x, y } = _screenToGraph(e.clientX, e.clientY);
+  const node = _nodeAt(x, y);
 
   if (node) {
     const now = Date.now();
 
-    // Double-click: same node, within 350ms of last click
+    // Double-click detection (< 350ms, same node)
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
+      // Double-click → open/toggle entity panel (do not drill graph focus)
       emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
       return;
     }
 
-    // Single click → select + open panel
-    _selectedId    = node.id;
-    _lastClickId   = node.id;
+    // Single click → select
+    _selectedId  = node.id;
+    _lastClickId = node.id;
     _lastClickTime = now;
     emit('graph:nodeSelected', { id: node.id, type: node.type });
     _render();
@@ -1080,13 +1036,10 @@ function _handleTouchStart(e) {
   if (btn === 'back')  { _focusBack(); return; }
   if (btn === 'exit')  { _focusExit(); return; }
 
-  const touchNode = _nodeAt(x, y);
-  // Capture at touchstart to avoid physics drift in touchend detection
-  _mouseDownNode = touchNode || null;
-
-  if (touchNode) {
+  const node = _nodeAt(x, y);
+  if (node) {
     _isDragging = true;
-    _dragNode   = touchNode;
+    _dragNode   = node;
     _dragVx     = 0;
     _dragVy     = 0;
     _wPh        = 0;
@@ -1198,14 +1151,13 @@ function _handleTouchEnd(e) {
     _panStart = null;
   }
 
-  // Use node captured at touchstart — physics may have moved nodes since then
-  const node = _mouseDownNode;
-  _mouseDownNode = null;
-
+  // Touch-tap → select / double-tap → focus
+  const { x, y } = _screenToGraph(touch.clientX, touch.clientY);
+  const node = _nodeAt(x, y);
   if (node) {
     const now = Date.now();
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
-      // Double-tap → toggle entity panel
+      // Double-tap → open/toggle entity panel (do not drill graph focus)
       emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
