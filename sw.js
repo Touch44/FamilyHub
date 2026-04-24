@@ -130,7 +130,7 @@ self.addEventListener('fetch', (event) => {
   // Always fetch fresh from network when online; cache for offline only.
   // This prevents stale JS/CSS/HTML being served after a deployment.
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: 'no-cache' })
       .then(response => {
         if (response.ok) {
           const clone = response.clone();

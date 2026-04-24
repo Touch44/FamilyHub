@@ -9,6 +9,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="FamilyHub" />
+  <!-- Force browsers and proxies never to cache this file -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <!-- Build: v2.2.0 -->
 
   <title>FamilyHub</title>
 
@@ -811,7 +816,11 @@
       // 11. Service Worker registration (Blueprint §8.2)
       if ('serviceWorker' in navigator) {
         try {
-          const reg = await navigator.serviceWorker.register('./sw.js');
+          // updateViaCache:'none' forces browser to always revalidate sw.js,
+          // bypassing both browser HTTP cache and GitHub Pages CDN cache.
+          const reg = await navigator.serviceWorker.register('./sw.js?v=2.2.0', {
+            updateViaCache: 'none',
+          });
           console.log('[FH] Service worker registered:', reg.scope);
 
           // Handle SW update available

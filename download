@@ -1,0 +1,24 @@
+# FamilyHub — Apache cache control for Hostinger
+# index.html: never cache — always serve fresh
+<Files "index.html">
+  Header set Cache-Control "no-cache, no-store, must-revalidate"
+  Header set Pragma "no-cache"
+  Header set Expires "0"
+</Files>
+
+# sw.js: never cache — browser must always check for updates
+<Files "sw.js">
+  Header set Cache-Control "no-cache, no-store, must-revalidate"
+  Header set Pragma "no-cache"
+  Header set Expires "0"
+</Files>
+
+# CSS/JS with version query strings: cache aggressively (they're already busted by ?v=)
+<FilesMatch "\.(css|js)$">
+  Header set Cache-Control "public, max-age=31536000"
+</FilesMatch>
+
+# Enable mod_headers if not already
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+</IfModule>

@@ -683,7 +683,7 @@ body {
 }
 
 .panel-icon-btn.active {
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  background: none;
   color: var(--color-accent);
 }
 
