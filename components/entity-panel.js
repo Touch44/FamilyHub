@@ -2629,6 +2629,7 @@ function _buildGraphTypeFilters() {
  * Single-click on graph node → open entity panel for that node.
  */
 function _handleGraphNodeSelected(id) {
+  console.log('[entity-panel] nodeSelected — id:', id, '_graphViewActive:', _graphViewActive);
   if (!_graphViewActive || !id) return;
   _graphPanelEntityId = id;
   openPanel(id).then(() => {
@@ -2637,11 +2638,8 @@ function _handleGraphNodeSelected(id) {
   });
 }
 
-/**
- * Double-click on graph node → toggle panel:
- * same entity = collapse, different/empty = open.
- */
 function _handleGraphNodeFocused(id) {
+  console.log('[entity-panel] nodeFocused — id:', id, '_graphViewActive:', _graphViewActive);
   if (!_graphViewActive || !id) return;
 
   const panelIsOpen = _panel?.classList.contains('open');

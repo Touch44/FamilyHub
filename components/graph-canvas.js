@@ -171,6 +171,8 @@ export function destroyGraph() {
   _dragNode   = null;
   _options    = {};
   _activeTypes.clear();
+  _lastClickId   = null;
+  _lastClickTime = 0;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -954,6 +956,8 @@ function _handleMouseUp(e) {
   // Handle click (select) and double-click (focus)
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
   const node = _nodeAt(x, y);
+
+  console.log('[graph-canvas] mouseup — node:', node?.id || 'none', '_lastClickId:', _lastClickId, 'delta:', node ? Date.now() - _lastClickTime : '-');
 
   if (node) {
     const now = Date.now();

@@ -1825,31 +1825,60 @@ async function renderDaily(params = {}) {
     sections.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-3);';
     viewEl.appendChild(sections);
 
-    // ── Section 1: Daily Notes (DR-linked) ───────────────────
+    // ── Section 1: Notes (always first) ─────────────────────
     await _renderDailyNotes(sections, dateStr);
 
-    // ── Section 2: Tasks (open by default) ───────────────────
+    // ── Section 2: Tasks (always second) ────────────────────
     await _renderTasks(sections, dateStr, tasks, personMap, projectMap);
 
-    // ── Section 3: Events ────────────────────────────────────
-    _renderEvents(sections, dateStr, events);
+    // ── Sections 3–N: dynamic order — non-empty before empty ─
+    // Pre-compute filtered data for each section to determine emptiness.
+    const filteredEvents      = _filterEvents(events, dateStr);
+    const filteredPosts       = _filterWallPosts(posts, dateStr);
+    const filteredReminders   = _filterReminders(appointments, dateStr);
+    const filteredBirthdays   = _filterDateEntities(dateEntities, _currentDate);
+    const filteredMeals       = _filterMeals(mealPlans, dateStr);
+    const filteredComments    = _filterComments(notes, dateStr);
 
-    // ── Section 4: Wall Posts ────────────────────────────────
-    _renderWallPosts(sections, dateStr, posts, personMap, accountMap);
+    // Each entry: { isEmpty, render }
+    const dynamicSections = [
+      {
+        isEmpty: filteredEvents.length === 0,
+        render:  () => _renderEvents(sections, dateStr, events),
+      },
+      {
+        isEmpty: filteredPosts.length === 0,
+        render:  () => _renderWallPosts(sections, dateStr, posts, personMap, accountMap),
+      },
+      {
+        isEmpty: filteredReminders.length === 0,
+        render:  () => _renderReminders(sections, dateStr, appointments),
+      },
+      {
+        isEmpty: filteredBirthdays.length === 0,
+        render:  () => _renderBirthdays(sections, dateEntities),
+      },
+      {
+        isEmpty: Object.values(filteredMeals).every(arr => arr.length === 0),
+        render:  () => _renderMeals(sections, dateStr, mealPlans),
+      },
+      {
+        isEmpty: filteredComments.length === 0,
+        render:  () => _renderComments(sections, dateStr, notes, personMap, accountMap),
+      },
+    ];
 
-    // ── Section 5: Reminders ─────────────────────────────────
-    _renderReminders(sections, dateStr, appointments);
+    // Stable sort: non-empty first, preserve relative order within each group
+    const sorted = [
+      ...dynamicSections.filter(s => !s.isEmpty),
+      ...dynamicSections.filter(s =>  s.isEmpty),
+    ];
 
-    // ── Section 6: Birthdays / Dates ─────────────────────────
-    _renderBirthdays(sections, dateEntities);
+    for (const section of sorted) {
+      section.render();
+    }
 
-    // ── Section 7: Meals Today ───────────────────────────────
-    _renderMeals(sections, dateStr, mealPlans);
-
-    // ── Section 8: Comments ──────────────────────────────────
-    _renderComments(sections, dateStr, notes, personMap, accountMap);
-
-    // ── Section 9: Activity Log (last) ──────────────────────
+    // ── Activity Log (always last) ───────────────────────────
     await _renderActivityLog(sections, dateStr, auditLog, accountMap);
 
   } catch (err) {
