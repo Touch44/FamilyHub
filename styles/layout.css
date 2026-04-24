@@ -597,6 +597,24 @@ body {
   transform: translateX(0);
 }
 
+/* Empty state: panel column visible but content cleared — click a node to populate */
+#entity-panel.graph-mode.graph-panel-empty #entity-panel-header,
+#entity-panel.graph-mode.graph-panel-empty #entity-panel-body {
+  display: none;
+}
+
+#entity-panel.graph-mode.graph-panel-empty::after {
+  content: 'Click a node to inspect';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  letter-spacing: -0.01em;
+  pointer-events: none;
+}
+
 /* Shrink the graph canvas column to leave room for the panel */
 #main.graph-active {
   display: grid;

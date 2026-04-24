@@ -104,14 +104,33 @@ export function initEntityPanel() {
     if (_entity && id === _entity.id) closePanel();
   });
 
-  // Graph canvas: single-click updates panel (in graph mode only)
+  // Graph canvas: single-click → update panel to that entity
   on('graph:nodeSelected', ({ id } = {}) => {
-    if (id) _handleGraphNodeSelected(id);
+    if (!_graphViewActive || !id) return;
+    _graphPanelEntityId = id;
+    _showGraphPanel();
+    openPanel(id).then(() => {
+      _activeTab = 'properties';
+      _renderActiveTab();
+    });
   });
 
-  // Graph canvas: double-click drills focus + updates panel
+  // Graph canvas: double-click → drills focus (graph-canvas handles setFocusId),
+  // also update panel to the focused entity
   on('graph:nodeFocused', ({ id } = {}) => {
-    if (id) _handleGraphNodeFocused(id);
+    if (!_graphViewActive || !id) return;
+    _graphPanelEntityId = id;
+    _showGraphPanel();
+    openPanel(id).then(() => {
+      _activeTab = 'properties';
+      _renderActiveTab();
+    });
+  });
+
+  // Graph canvas: empty space clicked → clear panel content (stay in graph)
+  on('graph:emptyClicked', () => {
+    if (!_graphViewActive) return;
+    _clearGraphPanel();
   });
 
   console.log('[entity-panel] Initialised.');
@@ -2487,12 +2506,23 @@ async function _openGraphView(entityId) {
 
   viewEl.appendChild(graphCol);
 
-  // ── Ensure entity panel is open ─────────────────────────
+  // ── Ensure entity panel is in graph mode ────────────────
   _graphViewActive = true;
-  // Mark panel as graph-mode so CSS positions it in the grid column
-  if (_panel) _panel.classList.add('graph-mode');
+  if (_panel) {
+    _panel.classList.add('graph-mode');
+    _panel.classList.add('open');             // panel column always visible
+    _panel.classList.add('graph-panel-empty'); // but content empty until first click
+    _panel.setAttribute('aria-hidden', 'false');
+  }
+  if (_panelBody)  _panelBody.innerHTML  = '';
+  const hdrEl = document.getElementById('entity-panel-header');
+  if (hdrEl)       hdrEl.innerHTML       = '';
+
+  // Open the entity that triggered graph view in the panel
+  _graphPanelEntityId = entityId;
+  _showGraphPanel();
   await openPanel(entityId);
-  // Track which entity is in the panel so double-click toggle works from first click
+  _panel?.classList.remove('graph-panel-empty');
   _graphPanelEntityId = entityId;
 
   // ── Force panel to properties tab in graph mode ─────────
@@ -2521,8 +2551,10 @@ function _closeGraphView() {
   destroyGraph();
   _graphViewActive = false;
 
-  // Remove graph-mode panel class so it returns to modal behavior
-  if (_panel) _panel.classList.remove('graph-mode');
+  if (_panel) {
+    _panel.classList.remove('graph-mode');
+    _panel.classList.remove('graph-panel-empty');
+  }
 
   const main   = document.getElementById('main');
   const viewEl = document.getElementById('view-graph');
@@ -2628,35 +2660,29 @@ function _buildGraphTypeFilters() {
 /**
  * Single-click on graph node → open entity panel for that node.
  */
-function _handleGraphNodeSelected(id) {
-  if (!_graphViewActive || !id) return;
-  _graphPanelEntityId = id;
-  openPanel(id).then(() => {
-    _activeTab = 'properties';
-    _renderActiveTab();
-  });
+/**
+ * Show the graph panel (ensure .open + remove empty state).
+ * Called before openPanel in graph mode so the panel is visible.
+ */
+function _showGraphPanel() {
+  if (!_panel) return;
+  _panel.classList.remove('graph-panel-empty');
+  _panel.classList.add('open');
+  _panel.setAttribute('aria-hidden', 'false');
 }
 
-function _handleGraphNodeFocused(id) {
-  if (!_graphViewActive || !id) return;
-
-  const panelIsOpen = _panel?.classList.contains('open');
-  const sameEntity  = panelIsOpen && _graphPanelEntityId === id;
-
-  if (sameEntity) {
-    _graphPanelEntityId = null;
-    _entity = null;
-    _config = null;
-    if (_panelBody) _panelBody.innerHTML = '';
-    const headerEl = document.getElementById('entity-panel-header');
-    if (headerEl) headerEl.innerHTML = '';
-  } else {
-    _graphPanelEntityId = id;
-    openPanel(id).then(() => {
-      _activeTab = 'properties';
-      _renderActiveTab();
-    });
-  }
+/**
+ * Clear graph panel content without exiting graph mode.
+ * Hides the panel content visually but keeps the panel column in the layout.
+ */
+function _clearGraphPanel() {
+  _graphPanelEntityId = null;
+  _entity = null;
+  _config = null;
+  if (_panelBody)  _panelBody.innerHTML  = '';
+  const headerEl = document.getElementById('entity-panel-header');
+  if (headerEl)    headerEl.innerHTML    = '';
+  if (_panel)      _panel.classList.add('graph-panel-empty');
 }
 
 

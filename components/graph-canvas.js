@@ -962,27 +962,29 @@ function _handleMouseUp(e) {
 
     // Double-click detection (< 350ms, same node)
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
-      // Double-click → open/toggle entity panel (do not drill graph focus)
+      // Double-click → drill graph to this node AND update panel
+      setFocusId(node.id);
       emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
       return;
     }
 
-    // Single click → select
-    _selectedId  = node.id;
-    _lastClickId = node.id;
+    // Single click → select node + update panel
+    _selectedId    = node.id;
+    _lastClickId   = node.id;
     _lastClickTime = now;
     emit('graph:nodeSelected', { id: node.id, type: node.type });
     _render();
   } else {
-    // Clicked empty space — deselect
+    // Clicked empty space — deselect + notify panel to close/clear
     if (_selectedId) {
       _selectedId = null;
       _render();
     }
     _lastClickId   = null;
     _lastClickTime = 0;
+    emit('graph:emptyClicked', {});
   }
 }
 
@@ -1159,7 +1161,8 @@ function _handleTouchEnd(e) {
   if (node) {
     const now = Date.now();
     if (_lastClickId === node.id && (now - _lastClickTime) < 350) {
-      // Double-tap → open/toggle entity panel (do not drill graph focus)
+      // Double-tap → drill graph focus + update panel
+      setFocusId(node.id);
       emit('graph:nodeFocused', { id: node.id, type: node.type });
       _lastClickId   = null;
       _lastClickTime = 0;
@@ -1170,6 +1173,14 @@ function _handleTouchEnd(e) {
       emit('graph:nodeSelected', { id: node.id, type: node.type });
       _render();
     }
+  } else {
+    if (_selectedId) {
+      _selectedId = null;
+      _render();
+    }
+    _lastClickId   = null;
+    _lastClickTime = 0;
+    emit('graph:emptyClicked', {});
   }
 
   _touchId = null;
