@@ -375,33 +375,7 @@ async function _syncDailyReviewLinks(dateStr, data) {
     const existing = await getEdgesFrom(dr.id, 'contains');
     const linkedSet = new Set(existing.map(e => e.toId));
 
-    // ── Tasks: due EXACTLY on this date only ─────────────
-    // We do NOT link overdue tasks (task's own due date DR handles that)
-    const filteredTasks = data.tasks.filter(t => {
-      if (new Set(['done', 'Done']).has(t.status)) return false;
-      const due = _isoToLocalDate(t.dueDate);
-      return due === dateStr; // EXACT match only
-    });
-    for (const t of filteredTasks) {
-      await _linkToDailyReview(dr.id, t.id, 'task', linkedSet);
-      linkedSet.add(t.id);
-    }
-
-    // ── Events: link if this date falls within event span ─
-    // Single-day: date === dateStr
-    // Multi-day: date <= dateStr <= endDate
-    for (const e of data.events.filter(e => {
-      const start = _isoToLocalDate(e.date);
-      const end   = _isoToLocalDate(e.endDate);
-      if (!start) return false;
-      if (!end || end <= start) return start === dateStr;
-      return start <= dateStr && dateStr <= end;
-    })) {
-      await _linkToDailyReview(dr.id, e.id, 'event', linkedSet);
-      linkedSet.add(e.id);
-    }
-
-    // ── Notes created today (not Daily Notes themselves) ──
+    // ── Notes created today (not comments, not daily-notes) ──
     for (const n of data.notes.filter(n =>
       n.type !== 'daily-note' &&
       n.category !== 'Comment' &&
@@ -410,6 +384,9 @@ async function _syncDailyReviewLinks(dateStr, data) {
       await _linkToDailyReview(dr.id, n.id, 'note', linkedSet);
       linkedSet.add(n.id);
     }
+
+    // Tasks and events are shown in their own dedicated sections —
+    // they are NOT auto-linked to the DR to avoid polluting the Notes section.
 
     // ── Wall posts created today ──────────────────────────
     for (const p of data.posts.filter(p => _isoToLocalDate(p.createdAt) === dateStr)) {
@@ -495,18 +472,24 @@ const ADD_ENTITY_TYPES = [
  * the graph edge (drId → entity, relation='contains').
  * Returns an array of entity objects (any type).
  */
-async function _loadDRLinkedEntities(dateStr) {
+/**
+ * Load only NOTE entities connected to the Daily Review for this date.
+ * These are notes whose createdAt matches this date, linked via 'contains' edges.
+ */
+async function _loadDRLinkedNotes(dateStr) {
   try {
     const dr = await _getOrCreateDailyReview(dateStr);
     if (!dr) return [];
     const edges = await getEdgesFrom(dr.id, 'contains');
-    if (!edges.length) return [];
+    const noteEdges = edges.filter(e => e.toType === 'note');
+    if (!noteEdges.length) return [];
     const resolved = await Promise.all(
-      edges.map(e => getEntity(e.toId).catch(() => null))
+      noteEdges.map(e => getEntity(e.toId).catch(() => null))
     );
-    return resolved.filter(n => n && !n.deleted);
+    // Exclude deleted notes AND comments (category==='Comment')
+    return resolved.filter(n => n && !n.deleted && n.category !== 'Comment');
   } catch (err) {
-    console.warn('[daily] _loadDRLinkedEntities failed:', err);
+    console.warn('[daily] _loadDRLinkedNotes failed:', err);
     return [];
   }
 }
@@ -750,52 +733,196 @@ function _renderEmpty(body, message) {
 // ── Section renderers ─────────────────────────────────────── //
 
 /**
- * Section 1: Linked Today — ALL entities connected to this date's Daily Review entity.
- * Created via the "+ Add" selector; each entity is linked via a 'contains' edge.
+ * Section 1: Notes Today — note entities created on this date, linked to the DR.
+ * Clicking a note opens a centered content-focused modal (not the right panel).
  */
 async function _renderDailyNotes(container, dateStr) {
-  const entities = await _loadDRLinkedEntities(dateStr);
-  const { wrapper, body } = _buildSection('notes', '📝', 'Linked Today', entities.length || null);
+  const notes = await _loadDRLinkedNotes(dateStr);
+  const { wrapper, body } = _buildSection('notes', '≡', 'Notes', notes.length || null);
   container.appendChild(wrapper);
 
-  if (!entities.length) {
-    _renderEmpty(body, 'Nothing linked to this day yet — use "+ Add" to connect entities.');
+  if (!notes.length) {
+    _renderEmpty(body, 'No notes for this day — use "+ Add → Note" to create one.');
     return;
   }
 
   const list = document.createElement('div');
   list.className = 'daily-notes-list';
 
-  // Group by entity type for a cleaner display
-  const TYPE_ICONS = {
-    note: '📝', task: '✅', event: '📅', appointment: '🔔', budgetEntry: '💰',
-    mealPlan: '🍽️', shoppingItem: '🛒', habit: '🔄', goal: '🎯', idea: '💡',
-    research: '🔬', book: '📚', trip: '✈️', place: '📍', weblink: '🔗',
-    medication: '💊', recipe: '🥗', contact: '🧑‍💼', document: '📄', project: '📁',
-  };
-
-  for (const entity of entities) {
-    const icon = TYPE_ICONS[entity.type] || '📎';
-    const title = entity.title || entity.name || entity.label || 'Untitled';
-    const preview = entity.body
-      ? _stripHtml(entity.body).slice(0, 60)
-      : (entity.description || entity.goal || entity.details || '');
+  for (const note of notes) {
+    const title   = note.title || 'Untitled';
+    const preview = _stripHtml(note.body || '').slice(0, 80);
 
     const row = document.createElement('div');
     row.className = 'daily-note-row';
-    row.style.cssText = 'display:flex;align-items:flex-start;gap:var(--space-2);';
+    row.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-0-5);padding:var(--space-2-5) var(--space-3);cursor:pointer;border-radius:var(--radius-sm);transition:background var(--transition-fast);';
     row.innerHTML = `
-      <span style="font-size:1.1rem;flex-shrink:0;padding-top:1px;">${icon}</span>
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-0-5);">
-        <span class="daily-note-row-title">${_esc(title)}</span>
-        ${preview ? `<span class="daily-note-row-preview">${_esc(preview)}${preview.length >= 60 ? '…' : ''}</span>` : ''}
-      </div>
+      <span class="daily-note-row-title" style="font-size:var(--text-sm);font-weight:var(--weight-medium);color:var(--color-text);">${_esc(title)}</span>
+      ${preview ? `<span class="daily-note-row-preview" style="font-size:var(--text-xs);color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(preview)}${preview.length >= 80 ? '…' : ''}</span>` : ''}
     `;
-    row.addEventListener('click', () => emit(EVENTS.PANEL_OPENED, { entityType: entity.type, entityId: entity.id }));
+    row.addEventListener('mouseenter', () => row.style.background = 'var(--color-surface-2)');
+    row.addEventListener('mouseleave', () => row.style.background = 'none');
+    // Open content modal for notes — NOT the right-side panel
+    row.addEventListener('click', () => _openNoteModal(note));
     list.appendChild(row);
   }
 
   body.appendChild(list);
+}
+
+/** Note-icon map for content modal type badge — reserved for future use */
+
+/**
+ * Open a centered content-focused modal for a note or content-first entity.
+ * Shows the body editor prominently. Clicking outside or pressing Esc closes it.
+ */
+function _openNoteModal(entity) {
+  // Remove any existing modal
+  document.getElementById('daily-note-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'daily-note-modal';
+  overlay.style.cssText = `
+    position: fixed; inset: 0; z-index: var(--z-modal);
+    background: rgba(15,23,42,0.45); backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+    padding: var(--space-4);
+  `;
+
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    background: var(--color-bg); border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 24px 64px rgba(15,23,42,0.2);
+    width: min(680px, calc(100vw - var(--space-8)));
+    max-height: calc(100dvh - 80px);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    animation: modalIn 0.18s cubic-bezier(0.4,0,0.2,1) both;
+  `;
+
+  // Centralised close — removes overlay AND cleans up the Esc listener
+  const closeModal = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onEsc);
+  };
+
+  // ── Header ───────────────────────────────────────────────
+  const header = document.createElement('div');
+  header.style.cssText = `
+    display:flex; align-items:flex-start; gap:var(--space-3);
+    padding: var(--space-4) var(--space-5) var(--space-3);
+    border-bottom: 1px solid var(--color-border); flex-shrink:0;
+  `;
+
+  const titleWrap = document.createElement('div');
+  titleWrap.style.cssText = 'flex:1;min-width:0;';
+
+  const titleEl = document.createElement('div');
+  titleEl.style.cssText = `
+    font-family: var(--font-heading); font-size: var(--text-xl);
+    font-weight: 700; color: var(--color-text); line-height: 1.3;
+    letter-spacing: -0.01em; cursor: pointer;
+  `;
+  titleEl.textContent = entity.title || 'Untitled';
+  titleEl.title = 'Click to edit title';
+  titleEl.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.style.cssText = 'width:100%;font:inherit;border:none;outline:none;background:none;color:inherit;letter-spacing:-0.01em;';
+    input.value = entity.title || '';
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let _titleSaved = false;
+    const saveTitle = async () => {
+      if (_titleSaved) return;
+      _titleSaved = true;
+      entity.title = input.value.trim() || 'Untitled';
+      titleEl.textContent = entity.title;
+      // input may already be detached if modal closed, guard before replaceWith
+      if (input.parentNode) input.replaceWith(titleEl);
+      try { await saveEntity(entity); } catch (e) { console.warn('[daily-modal] title save failed', e); }
+    };
+    input.addEventListener('blur', saveTitle);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = entity.title || ''; input.blur(); }
+    });
+  });
+
+  const dateEl = document.createElement('div');
+  dateEl.style.cssText = 'font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-1);';
+  const created = entity.createdAt ? new Date(entity.createdAt).toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' }) : '';
+  dateEl.textContent = created;
+
+  titleWrap.appendChild(titleEl);
+  titleWrap.appendChild(dateEl);
+
+  // Open-in-panel button
+  const panelBtn = document.createElement('button');
+  panelBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:0.9rem;padding:var(--space-1);border-radius:var(--radius-sm);flex-shrink:0;';
+  panelBtn.title = 'Open in panel';
+  panelBtn.textContent = '⊞';
+  panelBtn.addEventListener('click', () => {
+    closeModal();
+    emit(EVENTS.PANEL_OPENED, { entityType: entity.type, entityId: entity.id });
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:0.9rem;padding:var(--space-1);border-radius:var(--radius-sm);flex-shrink:0;';
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', closeModal);
+
+  header.appendChild(titleWrap);
+  header.appendChild(panelBtn);
+  header.appendChild(closeBtn);
+
+  // ── Body: content editor ─────────────────────────────────
+  const bodyWrap = document.createElement('div');
+  bodyWrap.style.cssText = 'flex:1;overflow-y:auto;padding:var(--space-5);';
+
+  const editor = document.createElement('div');
+  editor.contentEditable = 'true';
+  editor.className = 'panel-content-editor';
+  editor.setAttribute('data-placeholder', 'Start writing…');
+  editor.style.cssText = `
+    min-height: 240px; font-size: var(--text-sm); line-height: 1.8;
+    color: var(--color-text); outline: none; white-space: pre-wrap;
+    word-break: break-word;
+  `;
+  editor.innerHTML = entity.body || '';
+
+  let _debounce = null;
+  const doSave = async () => {
+    entity.body = editor.innerHTML;
+    try { await saveEntity(entity); } catch (e) { console.warn('[daily-modal] save failed', e); }
+  };
+  const schedSave = () => { clearTimeout(_debounce); _debounce = setTimeout(doSave, 800); };
+  editor.addEventListener('input', schedSave);
+  // Only save on blur if the focus moved outside the modal entirely
+  editor.addEventListener('blur', (e) => {
+    if (!modal.contains(e.relatedTarget)) {
+      clearTimeout(_debounce);
+      doSave();
+    }
+  });
+
+  bodyWrap.appendChild(editor);
+  modal.appendChild(header);
+  modal.appendChild(bodyWrap);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Close on overlay click (outside modal card)
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+  // Close on Esc — defined here so closeModal can reference it
+  const onEsc = e => { if (e.key === 'Escape') closeModal(); };
+  document.addEventListener('keydown', onEsc);
+
+  // Focus editor
+  setTimeout(() => editor.focus(), 50);
 }
 
 /**
