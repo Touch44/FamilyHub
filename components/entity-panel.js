@@ -1400,6 +1400,9 @@ function _editSelect(wrap, field) {
   });
 }
 
+// Date fields whose change should trigger DR edge re-wiring
+const DR_DATE_FIELDS = new Set(['dueDate', 'date', 'startDate']);
+
 function _editDate(wrap, field) {
   const current = _entity[field.key] ?? '';
   wrap.innerHTML = '';
@@ -1425,8 +1428,18 @@ function _editDate(wrap, field) {
     const val = input.value;
     const isoVal = val ? (field.type === 'datetime' ? new Date(val).toISOString() : val) : null;
     if (isoVal !== current) {
+      // Capture old/new date strings BEFORE mutating entity, for DR edge update
+      const oldDateStr = DR_DATE_FIELDS.has(field.key) ? _isoToLocalDate(current) : null;
+      const newDateStr = DR_DATE_FIELDS.has(field.key) ? _isoToLocalDate(isoVal) : null;
+
       _entity[field.key] = isoVal;
       await _save();
+
+      // Rewire Daily Review edges when a canonical date field changes
+      if (DR_DATE_FIELDS.has(field.key) && oldDateStr !== newDateStr) {
+        _updateDailyReviewEdgesForDateChange(_entity, field.key, oldDateStr, newDateStr)
+          .catch(err => console.warn('[entity-panel] DR edge update failed:', err));
+      }
     }
     _renderFieldValue(wrap, field);
   };
@@ -1779,6 +1792,70 @@ async function _getOrCreateDailyReview(dateStr) {
   } catch (err) {
     console.warn('[entity-panel] _getOrCreateDailyReview failed:', dateStr, err);
     return null;
+  }
+}
+
+/**
+ * When a date-bearing field (dueDate, date, startDate) changes on an entity,
+ * remove stale 'in daily review' edges pointing to the old date's DR entity
+ * and create the correct new edge for the new date.
+ *
+ * @param {object} entity        — the entity AFTER save (has new date value)
+ * @param {string} dateFieldKey  — which field changed ('dueDate' | 'date' | 'startDate')
+ * @param {string|null} oldDateStr — previous YYYY-MM-DD value (null if no previous date)
+ * @param {string|null} newDateStr — new YYYY-MM-DD value (null if date was cleared)
+ */
+async function _updateDailyReviewEdgesForDateChange(entity, dateFieldKey, oldDateStr, newDateStr) {
+  if (!entity?.id) return;
+  // Nothing changed
+  if (oldDateStr === newDateStr) return;
+
+  try {
+    // Remove old 'in daily review' edge for the old date
+    if (oldDateStr) {
+      const oldDR = await getEntitiesByType('dailyReview')
+        .then(all => all.find(dr => dr.date === oldDateStr && !dr.deleted))
+        .catch(() => null);
+      if (oldDR) {
+        const staleEdges = await getEdgesFrom(entity.id, 'in daily review')
+          .then(edges => edges.filter(e => e.toId === oldDR.id))
+          .catch(() => []);
+        for (const edge of staleEdges) {
+          try { await deleteEdge(edge.id); } catch { /* best effort */ }
+        }
+        // Also remove the reverse 'contains' edge from the old DR → entity
+        const staleContains = await getEdgesFrom(oldDR.id, 'contains')
+          .then(edges => edges.filter(e => e.toId === entity.id))
+          .catch(() => []);
+        for (const edge of staleContains) {
+          try { await deleteEdge(edge.id); } catch { /* best effort */ }
+        }
+        console.log('[entity-panel] removed stale DR edges from', oldDateStr, '→', entity.id);
+      }
+    }
+
+    // Create new 'in daily review' edge for the new date
+    if (newDateStr) {
+      const newDR = await _getOrCreateDailyReview(newDateStr);
+      if (newDR) {
+        // Check if edge already exists before creating
+        const existing = await getEdgesFrom(entity.id, 'in daily review')
+          .then(edges => edges.find(e => e.toId === newDR.id))
+          .catch(() => null);
+        if (!existing) {
+          await saveEdge({
+            fromId:   entity.id,
+            fromType: entity.type,
+            toId:     newDR.id,
+            toType:   'dailyReview',
+            relation: 'in daily review',
+          });
+        }
+        console.log('[entity-panel] linked', entity.id, '→ DR', newDateStr);
+      }
+    }
+  } catch (err) {
+    console.warn('[entity-panel] _updateDailyReviewEdgesForDateChange failed:', err);
   }
 }
 

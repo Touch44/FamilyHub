@@ -476,10 +476,6 @@ const ADD_ENTITY_TYPES = [
  * the graph edge (drId → entity, relation='contains').
  * Returns an array of entity objects (any type).
  */
-/**
- * Load only NOTE entities connected to the Daily Review for this date.
- * These are notes whose createdAt matches this date, linked via 'contains' edges.
- */
 async function _loadDRLinkedNotes(dateStr) {
   try {
     const dr = await _getOrCreateDailyReview(dateStr);
@@ -487,13 +483,21 @@ async function _loadDRLinkedNotes(dateStr) {
     const edges = await getEdgesFrom(dr.id, 'contains');
     const noteEdges = edges.filter(e => e.toType === 'note');
     if (!noteEdges.length) return [];
+    // Deduplicate by toId — concurrent writes (capture bar + _syncDailyReviewLinks)
+    // can produce two 'contains' edges to the same entity, rendering duplicate rows.
+    const seenIds = new Set();
+    const uniqueEdges = noteEdges.filter(e => {
+      if (seenIds.has(e.toId)) return false;
+      seenIds.add(e.toId);
+      return true;
+    });
     const resolved = await Promise.all(
-      noteEdges.map(e => getEntity(e.toId).catch(() => null))
+      uniqueEdges.map(e => getEntity(e.toId).catch(() => null))
     );
     return resolved.filter(n =>
       n && !n.deleted &&
-      n.type !== 'comment' &&      // new comment entity type
-      n.category !== 'Comment'     // legacy comment notes
+      n.type !== 'comment' &&
+      n.category !== 'Comment'
     );
   } catch (err) {
     console.warn('[daily] _loadDRLinkedNotes failed:', err);
@@ -1014,6 +1018,9 @@ function _renderEmpty(body, message) {
  */
 async function _renderDailyNotes(container, dateStr) {
   const notes = await _loadDRLinkedNotes(dateStr);
+  // Force open when notes exist — ensures newly captured notes are always visible
+  // after re-render, regardless of any previously stored closed state.
+  if (notes.length > 0) _setSectionOpen('notes', true);
   const { wrapper, body } = _buildSection('notes', '≡', 'Notes', notes.length || null);
   container.appendChild(wrapper);
 

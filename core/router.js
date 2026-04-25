@@ -103,10 +103,24 @@ export function navigate(viewKey, params = {}, label, replace = false) {
     // Replace current position
     _history[_cursor] = entry;
   } else {
-    // Truncate forward history, then push
-    _history = _history.slice(0, _cursor + 1);
-    _history.push(entry);
-    _cursor = _history.length - 1;
+    // Deduplicate: if the new entry is the same view+params as current, replace it.
+    // This prevents consecutive identical entries when the user re-navigates to
+    // the same view (e.g. clicking Daily Review sidebar repeatedly, or internal
+    // re-renders that go through navigate()).
+    const cur = _cursor >= 0 ? _history[_cursor] : null;
+    const isSameView = cur &&
+      cur.viewKey === entry.viewKey &&
+      _paramsKey(cur.params) === _paramsKey(entry.params);
+
+    if (isSameView) {
+      // Replace in-place — update label in case it changed (e.g. date-enriched label)
+      _history[_cursor] = entry;
+    } else {
+      // Truncate forward history, then push
+      _history = _history.slice(0, _cursor + 1);
+      _history.push(entry);
+      _cursor = _history.length - 1;
+    }
   }
 
   _applyView(entry);
@@ -344,11 +358,28 @@ function _resolveLabel(viewKey, params) {
     // Capitalise entity type key — will be overridden by graph-engine when available
     return params.entityTypeLabel || _capitalise(params.entityType);
   }
+  // Enrich Daily Review breadcrumb label with the specific date when present
+  if (viewKey === 'daily' && params.date) {
+    const [y, m, d] = params.date.split('-');
+    return `Daily Review — ${m}-${d}-${y}`;
+  }
   return VIEW_LABELS[viewKey] || _capitalise(viewKey);
 }
 
 function _capitalise(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Produce a stable string key from a params object for deduplication.
+ * Only includes fields relevant to view identity (ignores ephemeral flags).
+ */
+function _paramsKey(params) {
+  if (!params) return '';
+  // Include date (daily), entityType (entity-type) — the fields that make
+  // two navigations to the same viewKey genuinely distinct.
+  const { date, entityType } = params;
+  return JSON.stringify({ date: date || null, entityType: entityType || null });
 }
 
 // ── Hash-Based Deep Linking ───────────────────────────────── //
