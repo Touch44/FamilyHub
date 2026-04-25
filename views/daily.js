@@ -652,6 +652,275 @@ function _closeAddMenu(btn, menu) {
 }
 
 /**
+ * Build the inline quick-capture bar.
+ * Sits between the day nav strip and the sections list.
+ * Supports Note | Task | Idea toggle, Enter to save, Shift+Enter to open full form.
+ * After save: prepends the new item to the appropriate section without full reload.
+ *
+ * @param {HTMLElement} container  — the viewEl to append the bar to
+ * @param {string}      dateStr    — current date 'YYYY-MM-DD'
+ * @param {object}      sectionRefs — { notesBody, tasksBody } live DOM refs set after render
+ */
+function _buildCaptureBar(container, dateStr, sectionRefs) {
+  const TYPES = [
+    { key: 'note', label: 'Note', icon: '📝' },
+    { key: 'task', label: 'Task', icon: '✅' },
+    { key: 'idea', label: 'Idea', icon: '💡' },
+  ];
+  let selectedType = 'note';
+
+  const bar = document.createElement('div');
+  bar.id = 'daily-capture-bar';
+  bar.className = 'daily-capture-bar';
+
+  // Type toggle pill group
+  const toggles = document.createElement('div');
+  toggles.className = 'daily-capture-toggles';
+  toggles.setAttribute('role', 'group');
+  toggles.setAttribute('aria-label', 'Entity type');
+
+  const btnMap = {};
+  for (const t of TYPES) {
+    const btn = document.createElement('button');
+    btn.className = 'daily-capture-type-btn' + (t.key === selectedType ? ' active' : '');
+    btn.textContent = t.label;
+    btn.title = `Capture as ${t.label}`;
+    btn.setAttribute('aria-pressed', String(t.key === selectedType));
+    btn.addEventListener('click', () => {
+      selectedType = t.key;
+      for (const [k, b] of Object.entries(btnMap)) {
+        const on = k === selectedType;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+      }
+      inp.placeholder = _capturePlaceholder(selectedType);
+      inp.focus();
+    });
+    btnMap[t.key] = btn;
+    toggles.appendChild(btn);
+  }
+
+  // Text input
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'daily-capture-input';
+  inp.placeholder = _capturePlaceholder(selectedType);
+  inp.setAttribute('aria-label', 'Quick capture');
+  inp.autocomplete = 'off';
+
+  // Add (➕) button
+  const addBtn = document.createElement('button');
+  addBtn.className = 'daily-capture-add-btn btn btn-primary btn-sm';
+  addBtn.innerHTML = '&#xFF0B;';  // ＋ fullwidth plus — avoids template literal in attr
+  addBtn.title = 'Save (Enter)';
+  addBtn.setAttribute('aria-label', 'Save capture');
+
+  bar.appendChild(toggles);
+  bar.appendChild(inp);
+  bar.appendChild(addBtn);
+
+  // ── Save logic ───────────────────────────────────────────────
+  const doSave = async () => {
+    const title = inp.value.trim();
+    if (!title) return;
+
+    // Disable while saving
+    inp.disabled = true;
+    addBtn.disabled = true;
+
+    try {
+      const account = getAccount();
+      const now     = new Date().toISOString();
+
+      // Build entity based on type
+      const entityData = { type: selectedType, title, createdAt: now, updatedAt: now };
+      if (selectedType === 'task') {
+        entityData.dueDate = dateStr;
+        entityData.status  = 'Todo';
+        entityData.priority = 'Medium';
+      } else if (selectedType === 'note') {
+        entityData.category = 'Daily';
+      }
+
+      const saved = await saveEntity(entityData, account?.id);
+
+      // Link to Daily Review
+      const dr = await _getOrCreateDailyReview(dateStr);
+      if (dr && saved?.id) {
+        await saveEdge({
+          fromId:   dr.id,
+          fromType: 'dailyReview',
+          toId:     saved.id,
+          toType:   selectedType,
+          relation: 'contains',
+        });
+      }
+
+      // Prepend new item to correct live section
+      if (saved?.id) {
+        _prependCapturedItem(saved, selectedType, dateStr, sectionRefs);
+      }
+
+      // Clear input + show toast
+      inp.value = '';
+      _showCaptureToast(`${TYPES.find(t => t.key === selectedType)?.label || 'Item'} saved`);
+
+    } catch (err) {
+      console.error('[daily] Quick capture failed:', err);
+      _showCaptureToast('Save failed — try again', true);
+    } finally {
+      inp.disabled = false;
+      addBtn.disabled = false;
+      inp.focus();
+    }
+  };
+
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      doSave();
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      // Open full entity form
+      const prefill = {};
+      if (selectedType === 'task') { prefill.dueDate = dateStr; prefill.title = inp.value.trim(); }
+      if (selectedType === 'note') { prefill.category = 'Daily'; prefill.title = inp.value.trim(); }
+      if (selectedType === 'idea') { prefill.title = inp.value.trim(); }
+      inp.value = '';
+      _createAndLink(selectedType, dateStr, prefill);
+    }
+  });
+
+  addBtn.addEventListener('click', doSave);
+
+  container.appendChild(bar);
+}
+
+/** Return a placeholder hint for each capture type */
+function _capturePlaceholder(type) {
+  if (type === 'task') return 'New task for today…';
+  if (type === 'idea') return 'Capture an idea…';
+  return 'Capture a thought, task, or note…';
+}
+
+/**
+ * Prepend a newly captured entity row into the live section body without full reload.
+ * Works for note, task, and idea types.
+ */
+function _prependCapturedItem(entity, type, dateStr, sectionRefs) {
+  if (type === 'note') {
+    const body = sectionRefs.notesBody;
+    if (!body) return;
+    // Remove empty-state if present
+    body.querySelector('.daily-empty')?.remove();
+
+    const row = document.createElement('div');
+    row.className = 'daily-note-row';
+    row.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-0-5);padding:var(--space-2-5) var(--space-3);cursor:pointer;border-radius:var(--radius-sm);transition:background var(--transition-fast);border:1px solid var(--color-border);';
+    row.innerHTML = `
+      <span class="daily-note-row-title" style="font-size:var(--text-sm);font-weight:var(--weight-medium);color:var(--color-text);">${_esc(entity.title)}</span>
+    `;
+    row.addEventListener('mouseenter', () => row.style.background = 'var(--color-surface-2)');
+    row.addEventListener('mouseleave', () => row.style.background = 'none');
+    row.addEventListener('click', () => _openNoteModal(entity));
+
+    // Ensure list container exists
+    let list = body.querySelector('.daily-notes-list');
+    if (!list) {
+      list = document.createElement('div');
+      list.className = 'daily-notes-list';
+      body.appendChild(list);
+    }
+    list.prepend(row);
+
+    // Update count chip
+    const wrapper = body.closest('.collapsible');
+    if (wrapper) {
+      const chip = wrapper.querySelector('.daily-section-count');
+      if (chip) chip.textContent = String(list.children.length);
+    }
+
+  } else if (type === 'task') {
+    const body = sectionRefs.tasksBody;
+    if (!body) return;
+    body.querySelector('.daily-empty')?.remove();
+
+    const row = document.createElement('div');
+    row.className = 'daily-task-row';
+    row.dataset.id = entity.id;
+    row.innerHTML = `
+      <label class="daily-task-check-label" aria-label="Mark complete">
+        <input type="checkbox" class="daily-task-checkbox" data-id="${entity.id}" aria-label="Complete task" />
+      </label>
+      <div class="daily-task-info daily-task-info-clickable">
+        <span class="daily-task-title">${_esc(entity.title)}</span>
+        <div class="daily-task-meta">
+          <span class="badge badge-today">Today</span>
+          <span class="badge badge-prio badge-prio-medium">Medium</span>
+        </div>
+      </div>
+    `;
+    row.querySelector('.daily-task-info-clickable').addEventListener('click', () => {
+      emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: entity.id });
+    });
+    const cb = row.querySelector('.daily-task-checkbox');
+    cb.addEventListener('change', async () => {
+      if (!cb.checked) return;
+      const account = getAccount();
+      await saveEntity({ ...entity, status: 'Done' }, account?.id);
+      row.style.opacity = '0.4';
+      row.style.transition = 'opacity 0.3s';
+      setTimeout(() => {
+        row.remove();
+        const wrapper = body.closest('.collapsible');
+        if (wrapper) _updateSectionCount(wrapper);
+      }, 350);
+    });
+
+    let list = body.querySelector('.daily-task-list');
+    if (!list) {
+      list = document.createElement('div');
+      list.className = 'daily-task-list';
+      body.appendChild(list);
+    }
+    list.prepend(row);
+
+    const wrapper = body.closest('.collapsible');
+    if (wrapper) _updateSectionCount(wrapper);
+
+  } else {
+    // idea or other — open panel to show
+    if (entity?.id) {
+      setTimeout(() => emit(EVENTS.PANEL_OPENED, { entityType: type, entityId: entity.id }), 200);
+    }
+  }
+}
+
+/**
+ * Show a brief toast notification for capture feedback.
+ * Uses the existing #toast-container / .toast system from layout.css
+ * so styling, z-index, and animation are consistent app-wide.
+ * @param {string}  message
+ * @param {boolean} isError
+ */
+function _showCaptureToast(message, isError = false) {
+  const container = document.getElementById('toast-container');
+  if (!container) return; // fallback: no-op if container absent
+
+  const toast = document.createElement('div');
+  toast.className = 'toast' + (isError ? ' error' : ' success');
+  toast.textContent = message;
+  toast.setAttribute('role', 'status');
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.25s';
+    setTimeout(() => toast.remove(), 260);
+  }, 1800);
+}
+
+/**
  * Build the 7-day mini-calendar strip centred on _currentDate.
  * Shows 3 days before, today, 3 days after.
  */
@@ -1638,6 +1907,70 @@ function _injectStyles() {
     .daily-note-row-title   { font-size: var(--text-sm); font-weight: var(--weight-medium); }
     .daily-note-row-preview { font-size: var(--text-xs); color: var(--color-text-muted); }
 
+    /* ── Quick Capture Bar ───────────────────────────── */
+    .daily-capture-bar {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+    }
+    .daily-capture-toggles {
+      display: flex;
+      gap: var(--space-1);
+      flex-shrink: 0;
+    }
+    .daily-capture-type-btn {
+      font-size: 11px;
+      font-weight: var(--weight-semibold);
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 2px solid var(--color-border);
+      background: transparent;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+      line-height: 1.4;
+    }
+    .daily-capture-type-btn:hover {
+      border-color: var(--color-accent);
+      color: var(--color-accent);
+    }
+    .daily-capture-type-btn.active {
+      border-color: var(--color-accent);
+      background: var(--color-accent);
+      color: #fff;
+    }
+    .daily-capture-input {
+      flex: 1;
+      height: 36px;
+      border: none;
+      background: transparent;
+      color: var(--color-text);
+      font-size: var(--text-sm);
+      outline: none;
+      min-width: 0;
+    }
+    .daily-capture-input::placeholder { color: var(--color-text-muted); }
+    .daily-capture-add-btn {
+      flex-shrink: 0;
+      font-size: var(--text-md);
+      line-height: 1;
+      padding: var(--space-1) var(--space-2-5);
+      border-radius: var(--radius-sm);
+    }
+    @media (max-width: 600px) {
+      .daily-capture-bar {
+        flex-wrap: wrap;
+        gap: var(--space-2);
+      }
+      .daily-capture-toggles { flex: 0 0 auto; }
+      .daily-capture-input   { flex: 1 1 120px; }
+    }
+
     /* ── Activity Log ────────────────────────────────── */
     .daily-activity-list { display: flex; flex-direction: column; gap: var(--space-1-5); }
     .daily-activity-row {
@@ -1826,6 +2159,12 @@ async function renderDaily(params = {}) {
     // ── Top bar ──────────────────────────────────────────────
     _buildTopBar(viewEl, dateStr);
 
+    // ── sectionRefs: live DOM body refs for capture-bar prepend ──
+    const sectionRefs = { notesBody: null, tasksBody: null };
+
+    // ── Quick Capture Bar ────────────────────────────────────
+    _buildCaptureBar(viewEl, dateStr, sectionRefs);
+
     // ── Sections container ───────────────────────────────────
     const sections = document.createElement('div');
     sections.className = 'daily-sections';
@@ -1834,9 +2173,11 @@ async function renderDaily(params = {}) {
 
     // ── Section 1: Notes (always first) ─────────────────────
     await _renderDailyNotes(sections, dateStr);
+    sectionRefs.notesBody = sections.querySelector('#daily-section-body-notes');
 
     // ── Section 2: Tasks (always second) ────────────────────
     await _renderTasks(sections, dateStr, tasks, personMap, projectMap);
+    sectionRefs.tasksBody = sections.querySelector('#daily-section-body-tasks');
 
     // ── Sections 3–N: dynamic order — non-empty before empty ─
     // Pre-compute filtered data for each section to determine emptiness.
