@@ -30,6 +30,7 @@ const TYPE_VIEW_MAP = {
   note:         'notes',
   project:      'projects',
   post:         'family-wall',
+  comment:      'family-wall',
   budgetEntry:  'budget',
   recipe:       'recipes',
   document:     'documents',
@@ -131,6 +132,47 @@ export function initEntityPanel() {
   on('graph:emptyClicked', () => {
     if (!_graphViewActive) return;
     _clearGraphPanel();
+  });
+
+  // [minor] Graph canvas: focus exited or changed — rebuild type filter chips
+  on('graph:focusExited', () => {
+    if (!_graphViewActive) return;
+    // Small delay to let _buildGraph() finish populating _nodes before reading them
+    setTimeout(() => _buildGraphTypeFilters(), 80);
+  });
+
+  // If user navigates away via sidebar/breadcrumbs while graph is open, clean up
+  on(EVENTS.VIEW_CHANGED, ({ viewKey } = {}) => {
+    if (_graphViewActive && viewKey !== 'graph') {
+      // User navigated away while graph was open — fully tear down graph view
+      // [minor] Fix: also clear #view-graph DOM and main.graph-active so new view renders correctly
+      destroyGraph();
+      _graphViewActive    = false;
+      _graphPanelEntityId = null;
+      _graphPreviousView  = null;
+
+      // Clean up graph DOM so the incoming view can render correctly
+      const main   = document.getElementById('main');
+      const viewEl = document.getElementById('view-graph');
+      if (main)   main.classList.remove('graph-active');
+      if (viewEl) {
+        viewEl.classList.remove('active');
+        viewEl.setAttribute('aria-hidden', 'true');
+        viewEl.innerHTML = '';
+      }
+
+      if (_panel) {
+        _panel.classList.remove('graph-mode');
+        _panel.classList.remove('graph-panel-empty');
+      }
+      // Close the panel so it doesn't hang over the new view
+      if (_panel && _panel.classList.contains('open')) {
+        _panel.classList.remove('open');
+        _panel.setAttribute('aria-hidden', 'true');
+        _entity = null;
+        _config = null;
+      }
+    }
   });
 
   console.log('[entity-panel] Initialised.');
@@ -363,7 +405,10 @@ export async function openPanel(entityId, entityTypeHint) {
     _dirty     = false;
 
     // Auto-link entity to its Daily Note(s) in background
-    _ensureDailyLinks(entity).catch(() => {});
+    // Skip in graph mode — graph browsing shouldn't create new DR edges
+    if (!_graphViewActive) {
+      _ensureDailyLinks(entity).catch(() => {});
+    }
 
     _renderHeader();
     _renderActiveTab();
@@ -812,7 +857,7 @@ function _showConvertDropdown() {
 // All others open in 'properties' view.
 const CONTENT_FIRST_TYPES = new Set([
   'note', 'idea', 'research', 'book', 'document', 'weblink',
-  'trip', 'goal', 'habit', 'recipe', 'post',
+  'trip', 'goal', 'habit', 'recipe', 'post', 'comment',
 ]);
 
 // ── View definitions (icon toolbar) ──────────────────────── //
@@ -1729,7 +1774,7 @@ async function _ensureDailyLinks(entity) {
   if (!entity?.id || !entity?.type) return;
 
   // Skip types that are containers or lack temporal meaning
-  const SKIP_TYPES = new Set(['dailyReview', 'tag', 'note', 'budgetEntry', 'person',
+  const SKIP_TYPES = new Set(['dailyReview', 'tag', 'note', 'comment', 'budgetEntry', 'person',
                                'project', 'contact', 'place', 'weblink', 'recipe',
                                'medication', 'shoppingItem', 'habit', 'goal']);
   if (SKIP_TYPES.has(entity.type)) return;
@@ -2221,14 +2266,27 @@ async function _renderConnectionsList(container) {
 function _navigateToLinkedEntity(linked) {
   if (!linked) return;
 
-  if (linked.type === 'dailyReview' && linked.date) {
-    // Navigate to that specific date in the Daily Review view
-    navigate('daily', { date: linked.date }, `Daily Review — ${_formatDateForTitle(linked.date)}`);
+  // [minor] Fix: always close graph view before navigating away to another view
+  // Without this, navigate() fires VIEW_CHANGED which tears down graph mid-flight
+  if (_graphViewActive) _closeGraphView();
+
+  if (linked.type === 'dailyReview') {
+    // Prefer .date field; fall back to parsing title 'Daily Review — MM-DD-YYYY'
+    let dateStr = linked.date || null;
+    if (!dateStr && linked.title) {
+      const m = linked.title.match(/(\d{2})-(\d{2})-(\d{4})$/);
+      if (m) dateStr = `${m[3]}-${m[1]}-${m[2]}`; // → YYYY-MM-DD
+    }
+    if (dateStr) {
+      navigate('daily', { date: dateStr }, `Daily Review — ${_formatDateForTitle(dateStr)}`);
+      return;
+    }
+    // No date available — just open the panel
+    openPanel(linked.id);
     return;
   }
 
   if (linked.type === 'task') {
-    // Navigate to Kanban view, then open the task panel
     navigate('kanban', {}, 'Tasks');
     setTimeout(() => openPanel(linked.id), 150);
     return;
@@ -2506,26 +2564,19 @@ async function _openGraphView(entityId) {
 
   viewEl.appendChild(graphCol);
 
-  // ── Ensure entity panel is in graph mode ────────────────
-  _graphViewActive = true;
+  // ── Open triggering entity in the panel ─────────────────
+  _graphViewActive    = true;
+  _graphPanelEntityId = entityId;
+
   if (_panel) {
     _panel.classList.add('graph-mode');
-    _panel.classList.add('open');             // panel column always visible
-    _panel.classList.add('graph-panel-empty'); // but content empty until first click
+    _panel.classList.add('open');
     _panel.setAttribute('aria-hidden', 'false');
   }
-  if (_panelBody)  _panelBody.innerHTML  = '';
-  const hdrEl = document.getElementById('entity-panel-header');
-  if (hdrEl)       hdrEl.innerHTML       = '';
 
-  // Open the entity that triggered graph view in the panel
-  _graphPanelEntityId = entityId;
-  _showGraphPanel();
   await openPanel(entityId);
-  _panel?.classList.remove('graph-panel-empty');
-  _graphPanelEntityId = entityId;
 
-  // ── Force panel to properties tab in graph mode ─────────
+  // Force properties tab in graph mode
   _activeTab = 'properties';
   _renderActiveTab();
 
@@ -2645,7 +2696,10 @@ function _buildGraphTypeFilters() {
       if (isOn) _graphTypeFilters.delete(cfg.key);
       else      _graphTypeFilters.add(cfg.key);
       setActive(!isOn);
-      setActiveTypes(new Set(_graphTypeFilters));
+      // [minor] Fix: after rebuilding with new filter, refresh chips to reflect actual graph nodes
+      setActiveTypes(new Set(_graphTypeFilters)).then(() => {
+        setTimeout(() => _buildGraphTypeFilters(), 80);
+      });
     });
 
     filterRow.appendChild(chip);
@@ -2656,9 +2710,6 @@ function _buildGraphTypeFilters() {
 /**
  * When a node is single-clicked in graph mode, update the panel to show
  * that entity's properties — but do NOT drill down or navigate away.
- */
-/**
- * Single-click on graph node → open entity panel for that node.
  */
 /**
  * Show the graph panel (ensure .open + remove empty state).
@@ -2750,10 +2801,18 @@ function _navigateToEntityView(entity, config) {
   if (!viewPath) return;
 
   // dailyReview: navigate to that specific date, not just the daily view home
-  if (entity.type === 'dailyReview' && entity.date) {
-    navigate('daily', { date: entity.date },
-      `Daily Review — ${_formatDateForTitle(entity.date)}`);
-    return;
+  // [minor] Fix: also parse date from title if .date field is missing
+  if (entity.type === 'dailyReview') {
+    let dateStr = entity.date || null;
+    if (!dateStr && entity.title) {
+      const m = entity.title.match(/(\d{2})-(\d{2})-(\d{4})$/);
+      if (m) dateStr = `${m[3]}-${m[1]}-${m[2]}`;
+    }
+    if (dateStr) {
+      navigate('daily', { date: dateStr },
+        `Daily Review — ${_formatDateForTitle(dateStr)}`);
+      return;
+    }
   }
 
   if (viewPath.startsWith('entity-type/')) {
@@ -2816,7 +2875,6 @@ function _getDisplayTitle(entity, type) {
   return entity.title || entity.name || entity.label || 'Untitled';
 }
 
-/** Format ISO date string for display */
 /** Format ISO date string for display in date fields (date-only, no time) */
 function _formatDate(iso) {
   if (!iso) return '';

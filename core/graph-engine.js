@@ -207,7 +207,7 @@ const BUILT_IN_ENTITY_TYPES = [
     fields: [
       field('title',    'title',    { isTitle: true, label: 'Title' }),
       field('body',     'richtext', { label: 'Body', isTitle: false }),
-      field('category', 'select',   { label: 'Category', options: ['Inbox', 'Daily', 'Project'] }),
+      field('category', 'select',   { label: 'Category', options: ['Inbox', 'Daily', 'Project', 'Reference', 'Archive'] }),
       field('tags',     'tags',     { label: 'Tags' }),
     ],
   },
@@ -663,7 +663,27 @@ const BUILT_IN_ENTITY_TYPES = [
     ],
   },
 
-  // ── 25. dailyReview ───────────────────────────────────── //
+  // ── 25. comment ───────────────────────────────────────── //
+  {
+    key:         'comment',
+    label:       'Comment',
+    labelPlural: 'Comments',
+    icon:        '💬',
+    color:       '#64748b',
+    isBuiltIn:   true,
+    graphVisible: false,
+    defaultSort:  '-createdAt',
+    views:        ['wall'],
+    actions:      ['delete'],
+    fields: [
+      field('title',     'title',    { isTitle: true,  label: 'Comment' }),
+      field('body',      'richtext', { isTitle: false, label: 'Content' }),
+      field('author',    'relation', { label: 'Author',  relatesTo: 'person' }),
+      field('parentPost','relation', { label: 'Post',    relatesTo: 'post' }),
+    ],
+  },
+
+  // ── 26. dailyReview ───────────────────────────────────── //
   {
     key:         'dailyReview',
     label:       'Daily Review',

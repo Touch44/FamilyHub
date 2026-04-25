@@ -150,12 +150,13 @@ function _setSectionOpen(key, open) {
  * REVIEW 1: all getEntitiesByType calls use the correct type keys from graph-engine.js
  */
 async function _loadData(dateStr) {
-  const [tasks, events, notes, posts, appointments, dateEntities, mealPlans, auditLog,
+  const [tasks, events, notes, comments, posts, appointments, dateEntities, mealPlans, auditLog,
          persons, projects, authData] =
     await Promise.all([
       getEntitiesByType('task'),
       getEntitiesByType('event'),
       getEntitiesByType('note'),
+      getEntitiesByType('comment'),     // new dedicated comment type
       getEntitiesByType('post'),
       getEntitiesByType('appointment'),
       getEntitiesByType('dateEntity'),
@@ -166,12 +167,9 @@ async function _loadData(dateStr) {
       getSetting('auth'),
     ]);
 
-  // Build lookup maps for relation resolution
   const personMap  = new Map(persons.map(p  => [p.id, p.name  || p.title || p.id]));
   const projectMap = new Map(projects.map(pr => [pr.id, pr.name || pr.title || pr.id]));
 
-  // accountMap: accountId → display name
-  // Each account has memberId → linked person entity → person.name
   const accountMap = new Map();
   const accounts = authData?.accounts || [];
   for (const acct of accounts) {
@@ -179,8 +177,14 @@ async function _loadData(dateStr) {
     accountMap.set(acct.id, personName || acct.username || acct.id);
   }
 
+  // Merge new comment entities + legacy note-comments for backward compat
+  const allComments = [
+    ...comments,
+    ...notes.filter(n => n.category === 'Comment'),
+  ];
+
   return { tasks, events, notes, posts, appointments, dateEntities, mealPlans,
-           auditLog: auditLog || [], personMap, projectMap, accountMap };
+           auditLog: auditLog || [], personMap, projectMap, accountMap, allComments };
 }
 
 /**
@@ -232,12 +236,12 @@ function _filterWallPosts(posts, dateStr) {
 }
 
 /**
- * Filter note entities that are comments (category='Comment') created today.
- * These are comments left on wall posts via the comments-on edge.
+ * Filter comment entities created today.
+ * Supports both new type:'comment' and legacy type:'note' category:'Comment'.
  */
 function _filterComments(notes, dateStr) {
   return notes.filter(n =>
-    n.category === 'Comment' &&
+    (n.type === 'comment' || n.category === 'Comment') &&
     _isoToLocalDate(n.createdAt) === dateStr
   );
 }
@@ -375,10 +379,10 @@ async function _syncDailyReviewLinks(dateStr, data) {
     const existing = await getEdgesFrom(dr.id, 'contains');
     const linkedSet = new Set(existing.map(e => e.toId));
 
-    // ── Notes created today (not comments, not daily-notes) ──
+    // ── Notes created today (not comments) ──
     for (const n of data.notes.filter(n =>
-      n.type !== 'daily-note' &&
-      n.category !== 'Comment' &&
+      n.type !== 'comment' &&          // new comment entity type
+      n.category !== 'Comment' &&      // legacy comment notes
       _isoToLocalDate(n.createdAt) === dateStr
     )) {
       await _linkToDailyReview(dr.id, n.id, 'note', linkedSet);
@@ -395,10 +399,10 @@ async function _syncDailyReviewLinks(dateStr, data) {
     }
 
     // ── Comments created today ────────────────────────────
-    for (const c of data.notes.filter(n =>
-      n.category === 'Comment' && _isoToLocalDate(n.createdAt) === dateStr
+    for (const c of (data.allComments || []).filter(c =>
+      _isoToLocalDate(c.createdAt) === dateStr
     )) {
-      await _linkToDailyReview(dr.id, c.id, 'note', linkedSet);
+      await _linkToDailyReview(dr.id, c.id, c.type || 'note', linkedSet);
       linkedSet.add(c.id);
     }
 
@@ -486,8 +490,11 @@ async function _loadDRLinkedNotes(dateStr) {
     const resolved = await Promise.all(
       noteEdges.map(e => getEntity(e.toId).catch(() => null))
     );
-    // Exclude deleted notes AND comments (category==='Comment')
-    return resolved.filter(n => n && !n.deleted && n.category !== 'Comment');
+    return resolved.filter(n =>
+      n && !n.deleted &&
+      n.type !== 'comment' &&      // new comment entity type
+      n.category !== 'Comment'     // legacy comment notes
+    );
   } catch (err) {
     console.warn('[daily] _loadDRLinkedNotes failed:', err);
     return [];
@@ -1804,13 +1811,13 @@ async function renderDaily(params = {}) {
   try {
     // Load all data in parallel
     const { tasks, events, notes, posts, appointments, dateEntities, mealPlans, auditLog,
-            personMap, projectMap, accountMap } =
+            personMap, projectMap, accountMap, allComments } =
       await _loadData(dateStr);
 
     // ── Sync Daily Review entity + bidirectional links (non-blocking) ─
     // Run in background — don't let link errors break the render
     _syncDailyReviewLinks(dateStr, {
-      tasks, events, notes, posts, appointments, dateEntities, mealPlans,
+      tasks, events, notes, posts, appointments, dateEntities, mealPlans, allComments,
     }).catch(err => console.warn('[daily] Daily Review sync error (non-fatal):', err));
 
     // Clear and rebuild
@@ -1838,7 +1845,7 @@ async function renderDaily(params = {}) {
     const filteredReminders   = _filterReminders(appointments, dateStr);
     const filteredBirthdays   = _filterDateEntities(dateEntities, _currentDate);
     const filteredMeals       = _filterMeals(mealPlans, dateStr);
-    const filteredComments    = _filterComments(notes, dateStr);
+    const filteredComments    = _filterComments(allComments, dateStr);
 
     // Each entry: { isEmpty, render }
     const dynamicSections = [
@@ -1864,7 +1871,7 @@ async function renderDaily(params = {}) {
       },
       {
         isEmpty: filteredComments.length === 0,
-        render:  () => _renderComments(sections, dateStr, notes, personMap, accountMap),
+        render:  () => _renderComments(sections, dateStr, allComments, personMap, accountMap),
       },
     ];
 

@@ -274,8 +274,10 @@ function _updateHash(viewKey, params) {
   if (viewKey === 'entity-type' && params.entityType) {
     hash = `entity-type/${params.entityType}`;
   }
-  // Use replaceState-style approach — just set hash directly.
-  // We skip the hashchange listener when we set this.
+  // [minor] Fix: include date param in daily hash so browser back/forward restores correct date
+  if (viewKey === 'daily' && params.date) {
+    hash = `daily/${params.date}`;
+  }
   _suppressHashChange = true;
   window.location.hash = hash;
   _suppressHashChange = false;
@@ -363,7 +365,6 @@ export function handleInitialHash() {
   const entityMatch = hash.match(/^entity\/([^/]+)\/([^/]+)$/);
   if (entityMatch) {
     const [, entityType, entityId] = entityMatch;
-    // Navigate to appropriate view first, then open panel
     navigate(VIEW_KEYS.DAILY);
     emit(EVENTS.PANEL_OPENED, { entityType, entityId });
     return true;
@@ -373,6 +374,13 @@ export function handleInitialHash() {
   const typeMatch = hash.match(/^entity-type\/([^/]+)$/);
   if (typeMatch) {
     navigate(VIEW_KEYS.ENTITY_TYPE, { entityType: typeMatch[1] });
+    return true;
+  }
+
+  // [minor] Fix: daily view with date: #daily/YYYY-MM-DD
+  const dailyMatch = hash.match(/^daily\/(\d{4}-\d{2}-\d{2})$/);
+  if (dailyMatch) {
+    navigate(VIEW_KEYS.DAILY, { date: dailyMatch[1] });
     return true;
   }
 

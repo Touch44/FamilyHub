@@ -842,13 +842,13 @@ async function _buildCard(post, pm, apm) {
       const { pm:p2,apm:a2 }=await _loadData().catch(()=>({pm:new Map(),apm:new Map()}));
       const ap=p2.get(a?.memberId)||a2.get(a?.id);
       const saved=await saveEntity({
-        type:'note',title:txt.slice(0,80),body:txt,category:'Comment',
+        type:'comment',title:txt.slice(0,80),body:txt,
         _authorPersonId:a?.memberId||null,
         _authorName:ap?.name||a?.username||'Unknown',
         _authorColor:_getColor(ap),
         _parentPostId:post.id,
       },a?.id);
-      await saveEdge({fromId:saved.id,toId:post.id,relation:'comments-on'},a?.id);
+      await saveEdge({fromId:saved.id,fromType:'comment',toId:post.id,toType:'post',relation:'comments-on'},a?.id);
       cf.value=''; renderWall({_internal:true});
     } catch(e){ console.error(e); } finally{ cr.disabled=false; }
   });

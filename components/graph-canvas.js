@@ -46,6 +46,7 @@ let _dragVy      = 0;
 let _wPh         = 0;
 
 let _panStart    = null;   // { mx, my, ox, oy } for background pan
+let _wasPan      = false;  // true if background pan moved — suppresses emptyClicked
 let _rafId       = null;
 let _frameCount  = 0;
 let _physicsRunning = false;
@@ -137,6 +138,10 @@ export async function initGraph(canvasEl, options = {}) {
   _dragVx     = 0;
   _dragVy     = 0;
   _wPh        = 0;
+  _panStart      = null;
+  _wasPan        = false;
+  _lastClickId   = null;
+  _lastClickTime = 0;
 
   // Size canvas to container
   _resizeCanvas();
@@ -173,6 +178,8 @@ export function destroyGraph() {
   _activeTypes.clear();
   _lastClickId   = null;
   _lastClickTime = 0;
+  _wasPan        = false;
+  _panStart      = null;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -352,6 +359,9 @@ async function _buildGraph() {
   }
 
   // ── Step 6: Start RAF physics loop ──────────────────────
+  // [minor] Fix: guard against destroyGraph() being called during async build
+  // If _canvas was nulled while we were awaiting DB calls, abort cleanly
+  if (!_canvas || !_ctx) return;
   _frameCount = 0;
   _physicsRunning = true;
   _rafLoop();
@@ -854,6 +864,7 @@ function _handleMouseDown(e) {
     _canvas.style.cursor = 'grabbing';
   } else {
     // Start panning background
+    _wasPan   = false;  // reset pan-move flag on each new mousedown
     _panStart = { mx: e.clientX, my: e.clientY, ox: _offset.x, oy: _offset.y };
     _canvas.style.cursor = 'move';
   }
@@ -865,7 +876,8 @@ function _handleMouseMove(e) {
   const { x, y } = _screenToGraph(e.clientX, e.clientY);
 
   if (_panStart) {
-    // Background pan
+    // Background pan — mark that actual movement occurred
+    _wasPan   = true;
     _offset.x = _panStart.ox + (e.clientX - _panStart.mx);
     _offset.y = _panStart.oy + (e.clientY - _panStart.my);
     _render();
@@ -978,13 +990,17 @@ function _handleMouseUp(e) {
     _render();
   } else {
     // Clicked empty space — deselect + notify panel to close/clear
+    // Only fire emptyClicked on a genuine click (not after a background pan)
     if (_selectedId) {
       _selectedId = null;
       _render();
     }
     _lastClickId   = null;
     _lastClickTime = 0;
-    emit('graph:emptyClicked', {});
+    if (!_wasPan) {
+      emit('graph:emptyClicked', {});
+    }
+    _wasPan = false;
   }
 }
 
@@ -998,8 +1014,11 @@ function _handleWheel(e) {
   const mx   = e.clientX - rect.left;
   const my   = e.clientY - rect.top;
 
-  const delta    = e.deltaY > 0 ? 0.92 : 1.08;
-  const newScale = Math.max(0.2, Math.min(5.0, _scale * delta));
+  // [minor] Fix: slow down zoom — was 0.92/1.08, now 0.97/1.03 per tick
+  // Also normalise deltaY across trackpad vs mouse wheel
+  const rawDelta = e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY; // line vs px
+  const factor   = rawDelta > 0 ? 0.97 : 1.03;
+  const newScale = Math.max(0.2, Math.min(5.0, _scale * factor));
 
   // Zoom toward cursor position
   const ratio = newScale / _scale;
@@ -1048,6 +1067,7 @@ function _handleTouchStart(e) {
     _dragVy     = 0;
     _wPh        = 0;
   } else {
+    _wasPan   = false;  // reset pan flag on new touch
     _panStart = { mx: touch.clientX, my: touch.clientY, ox: _offset.x, oy: _offset.y };
   }
 }
@@ -1066,7 +1086,9 @@ function _handleTouchMove(e) {
     const mx       = midX - rect.left;
     const my       = midY - rect.top;
 
-    const delta    = newDist / _pinchDist;
+    // [minor] Fix: dampen pinch factor to 0.3× raw ratio to slow finger zoom
+    const rawRatio = newDist / _pinchDist;
+    const delta    = 1 + (rawRatio - 1) * 0.3;
     const newScale = Math.max(0.2, Math.min(5.0, _scale * delta));
     const ratio    = newScale / _scale;
     _offset.x = mx - (mx - _offset.x) * ratio;
@@ -1084,6 +1106,7 @@ function _handleTouchMove(e) {
   const { x, y } = _screenToGraph(touch.clientX, touch.clientY);
 
   if (_panStart) {
+    _wasPan   = true;   // mark that actual pan movement occurred
     _offset.x = _panStart.ox + (touch.clientX - _panStart.mx);
     _offset.y = _panStart.oy + (touch.clientY - _panStart.my);
     _render();
@@ -1180,7 +1203,11 @@ function _handleTouchEnd(e) {
     }
     _lastClickId   = null;
     _lastClickTime = 0;
-    emit('graph:emptyClicked', {});
+    // Only clear panel on genuine tap — not after a pan gesture
+    if (!_wasPan) {
+      emit('graph:emptyClicked', {});
+    }
+    _wasPan = false;
   }
 
   _touchId = null;
@@ -1202,6 +1229,8 @@ async function _focusBack() {
     _focusId = prev.id;
     // Don't re-push to trail since prev is already there
     await _buildGraph();
+    // [minor] Notify entity-panel to refresh filter chips for new focus
+    emit('graph:focusExited', {});
   } else {
     _focusExit();
   }
@@ -1211,6 +1240,8 @@ async function _focusExit() {
   _focusId    = null;
   _focusTrail = [];
   await _buildGraph();
+  // [minor] Fix: notify entity-panel to rebuild type filter chips after exit focus
+  emit('graph:focusExited', {});
 }
 
 // ══════════════════════════════════════════════════════════════

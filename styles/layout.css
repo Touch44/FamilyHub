@@ -598,6 +598,10 @@ body {
 }
 
 /* Empty state: panel column visible but content cleared — click a node to populate */
+#entity-panel.graph-mode.graph-panel-empty {
+  pointer-events: none;  /* let graph canvas receive clicks when panel is empty */
+}
+
 #entity-panel.graph-mode.graph-panel-empty #entity-panel-header,
 #entity-panel.graph-mode.graph-panel-empty #entity-panel-body {
   display: none;
