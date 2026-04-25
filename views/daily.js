@@ -1229,24 +1229,45 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
 
   const account = getAccount();
 
-  const list = document.createElement('div');
-  list.className = 'daily-task-list';
+  // Split into overdue vs today
+  const overdueTasks = filtered.filter(t => (_isoToLocalDate(t.dueDate) || '') < dateStr);
+  const todayTasks   = filtered.filter(t => (_isoToLocalDate(t.dueDate) || '') === dateStr);
 
-  for (const task of filtered) {
-    const due        = _isoToLocalDate(task.dueDate) || '';
-    const isOverdue  = due < dateStr;
-    const row        = document.createElement('div');
-    row.className    = 'daily-task-row' + (isOverdue ? ' overdue' : '');
-    row.dataset.id   = task.id;
+  /**
+   * Calculate human-readable "N days overdue" string.
+   * Both dateStr and due are 'YYYY-MM-DD' local date strings.
+   */
+  function _daysOverdue(due) {
+    const dueParts   = due.split('-').map(Number);
+    const todayParts = dateStr.split('-').map(Number);
+    const dueMs   = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]).getTime();
+    const todayMs = new Date(todayParts[0], todayParts[1] - 1, todayParts[2]).getTime();
+    const days = Math.round((todayMs - dueMs) / 86400000);
+    return days === 1 ? '1 day overdue' : `${days} days overdue`;
+  }
 
-    // Priority colour accent
-    const prioClass = task.priority
-      ? `prio-${task.priority.toLowerCase()}`
-      : 'prio-none';
+  /**
+   * Build a task row element.
+   * @param {object} task
+   * @param {boolean} isOverdue
+   */
+  function _buildTaskRow(task, isOverdue) {
+    const due       = _isoToLocalDate(task.dueDate) || '';
+    const row       = document.createElement('div');
+    row.className   = 'daily-task-row' + (isOverdue ? ' overdue' : '');
+    row.dataset.id  = task.id;
 
-    // Resolve relation IDs to display names
-    const projectName  = task.project    ? (projectMap.get(task.project)    || null) : null;
-    const assigneeName = task.assignedTo ? (personMap.get(task.assignedTo)  || null) : null;
+    const prioClass    = task.priority ? `prio-${task.priority.toLowerCase()}` : 'prio-none';
+    const projectName  = task.project    ? (projectMap.get(task.project)   || null) : null;
+    const assigneeName = task.assignedTo ? (personMap.get(task.assignedTo) || null) : null;
+
+    const dueBadge = isOverdue
+      ? `<span class="badge badge-danger daily-overdue-label" title="Overdue">${_esc(_daysOverdue(due))}</span>`
+      : `<span class="badge badge-today">Today</span>`;
+
+    if (isOverdue) {
+      row.style.cssText = 'background:var(--color-danger-bg);border-left:3px solid var(--color-danger);';
+    }
 
     row.innerHTML = `
       <label class="daily-task-check-label" aria-label="Mark '${_esc(task.title)}' complete">
@@ -1258,15 +1279,12 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
         <div class="daily-task-meta">
           ${projectName  ? `<span class="chip chip-project" title="Project">📁 ${_esc(projectName)}</span>` : ''}
           ${assigneeName ? `<span class="chip chip-assignee" title="Assigned to">${_esc(_firstInitial(assigneeName))} ${_esc(assigneeName)}</span>` : ''}
-          ${isOverdue
-            ? `<span class="badge badge-danger" title="Overdue">Overdue · ${_esc(due)}</span>`
-            : `<span class="badge badge-today">Today</span>`}
+          ${dueBadge}
           ${task.priority ? `<span class="badge badge-prio badge-prio-${(task.priority||'').toLowerCase()}">${_esc(task.priority)}</span>` : ''}
         </div>
       </div>
     `;
 
-    // Clicking the info area opens the entity panel; checkbox handles completion
     row.querySelector('.daily-task-info-clickable').addEventListener('click', () => {
       emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: task.id });
     });
@@ -1277,12 +1295,10 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
       try {
         const updated = { ...task, status: 'Done' };
         await saveEntity(updated, account?.id);
-        // Animate removal
         row.style.opacity = '0.4';
         row.style.transition = 'opacity 0.3s';
         setTimeout(() => {
           row.remove();
-          // Update count chip
           _updateSectionCount(wrapper);
         }, 350);
       } catch (err) {
@@ -1291,10 +1307,46 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
       }
     });
 
-    list.appendChild(row);
+    return row;
   }
 
-  body.appendChild(list);
+  // ── Overdue sub-group ──────────────────────────────────────────────────────
+  if (overdueTasks.length) {
+    const overdueGroup = document.createElement('div');
+    overdueGroup.className = 'daily-task-subgroup';
+
+    const overdueHeader = document.createElement('div');
+    overdueHeader.className = 'daily-task-subgroup-header daily-task-subgroup-header--overdue';
+    overdueHeader.innerHTML = `<span>⚠ Overdue (${overdueTasks.length})</span>`;
+    overdueGroup.appendChild(overdueHeader);
+
+    const overdueList = document.createElement('div');
+    overdueList.className = 'daily-task-list';
+    for (const task of overdueTasks) {
+      overdueList.appendChild(_buildTaskRow(task, true));
+    }
+    overdueGroup.appendChild(overdueList);
+    body.appendChild(overdueGroup);
+  }
+
+  // ── Due Today sub-group ────────────────────────────────────────────────────
+  if (todayTasks.length) {
+    const todayGroup = document.createElement('div');
+    todayGroup.className = 'daily-task-subgroup';
+
+    const todayHeader = document.createElement('div');
+    todayHeader.className = 'daily-task-subgroup-header daily-task-subgroup-header--today';
+    todayHeader.innerHTML = `<span>Due Today</span>`;
+    todayGroup.appendChild(todayHeader);
+
+    const todayList = document.createElement('div');
+    todayList.className = 'daily-task-list';
+    for (const task of todayTasks) {
+      todayList.appendChild(_buildTaskRow(task, false));
+    }
+    todayGroup.appendChild(todayList);
+    body.appendChild(todayGroup);
+  }
 }
 
 /**
@@ -1842,7 +1894,12 @@ function _injectStyles() {
       transition: background var(--transition-base), opacity 0.3s;
     }
     .daily-task-row:hover { background: var(--color-surface); }
-    .daily-task-row.overdue { border-left: 3px solid var(--color-danger); }
+    .daily-task-row.overdue { background: var(--color-danger-bg); border-left: 3px solid var(--color-danger) !important; }
+    .daily-task-subgroup { margin-bottom: var(--space-2); }
+    .daily-task-subgroup-header { padding: var(--space-1) var(--space-2); border-radius: var(--radius); font-size: var(--text-xs); font-weight: var(--weight-semibold); margin-bottom: var(--space-1-5); }
+    .daily-task-subgroup-header--overdue { background: var(--color-danger-bg); border: 1px solid var(--color-danger); color: var(--color-danger); }
+    .daily-task-subgroup-header--today { background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text-muted); }
+    .daily-overdue-label { color: var(--color-danger) !important; font-weight: 600; }
     .daily-task-check-label { cursor: pointer; padding-top: 2px; flex-shrink: 0; }
     .daily-task-checkbox { width: 15px; height: 15px; cursor: pointer; accent-color: var(--color-accent); }
     .daily-task-info { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }
