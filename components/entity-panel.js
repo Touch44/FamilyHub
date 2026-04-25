@@ -22,6 +22,7 @@ let _graphViewActive = false;
 let _graphPreviousView = null;   // viewKey to restore on exit
 let _graphPanelEntityId = null;  // tracks which entity is showing in the panel during graph mode
 let _graphTypeFilters = new Set(); // entity types currently shown in graph
+let _graphAllTypes = [];           // [minor] all graphVisible types — captured at graph open, never shrinks
 
 // ── Entity type → native view mapping ─────────────────────── //
 const TYPE_VIEW_MAP = {
@@ -134,11 +135,26 @@ export function initEntityPanel() {
     _clearGraphPanel();
   });
 
-  // [minor] Graph canvas: focus exited or changed — rebuild type filter chips
+  // [minor] Graph canvas: focus exited — merge any new rendered types into _graphAllTypes,
+  // then rebuild chips so newly-discovered types get their chips too.
   on('graph:focusExited', () => {
     if (!_graphViewActive) return;
-    // Small delay to let _buildGraph() finish populating _nodes before reading them
-    setTimeout(() => _buildGraphTypeFilters(), 80);
+    setTimeout(() => {
+      // Merge newly-rendered types into _graphAllTypes (union — never shrinks)
+      const rendered = getActiveNodeTypes();
+      const knownKeys = new Set(_graphAllTypes.map(c => c.key));
+      const allCfgs = getAllEntityTypes();
+      for (const key of rendered) {
+        if (!knownKeys.has(key)) {
+          const cfg = allCfgs.find(c => c.key === key);
+          if (cfg) {
+            _graphAllTypes.push(cfg);
+            _graphTypeFilters.add(key); // new type starts ON
+          }
+        }
+      }
+      _buildGraphTypeFilters();
+    }, 80);
   });
 
   // If user navigates away via sidebar/breadcrumbs while graph is open, clean up
@@ -150,6 +166,7 @@ export function initEntityPanel() {
       _graphViewActive    = false;
       _graphPanelEntityId = null;
       _graphPreviousView  = null;
+      _graphAllTypes      = [];
 
       // Clean up graph DOM so the incoming view can render correctly
       const main   = document.getElementById('main');
@@ -2589,7 +2606,14 @@ async function _openGraphView(entityId) {
     focusEntityId: entityId,
   });
 
-  // ── Populate type filter toggles ─────────────────────────
+  // ── Capture rendered type set then populate filter chips ─
+  // [minor] Only types with actual nodes get chips — keeps filter bar clean.
+  // _graphAllTypes grows via focusExited merge as user explores the graph.
+  // _graphTypeFilters tracks which are ON (starts: all rendered types ON).
+  const _initialRendered = getActiveNodeTypes();
+  const _allTypeCfgs = getAllEntityTypes();
+  _graphAllTypes = _allTypeCfgs.filter(cfg => _initialRendered.has(cfg.key));
+  _graphTypeFilters = new Set(_graphAllTypes.map(c => c.key));
   _buildGraphTypeFilters();
 
   console.log('[entity-panel] [minor] Graph view opened for', entityId);
@@ -2630,6 +2654,7 @@ function _closeGraphView() {
 
   _graphPreviousView  = null;
   _graphPanelEntityId = null;
+  _graphAllTypes      = [];
   closePanel();
 
   console.log('[entity-panel] [minor] Graph view closed.');
@@ -2637,8 +2662,15 @@ function _closeGraphView() {
 
 /**
  * Build entity type filter toggle chips in the graph toolbar.
- * ONLY shows types that are actually present as nodes in the current graph —
- * not all types in the DB. Uses getActiveNodeTypes() from graph-canvas.
+ *
+ * [minor] Design: _graphAllTypes holds only types with actual nodes (grows on focusExited).
+ * _graphTypeFilters tracks which are ON. Toggled-OFF chips stay visible greyed — never vanish.
+ *
+ *  ON + has nodes  → coloured chip, full opacity
+ *  ON + no nodes   → coloured chip, 50% opacity
+ *  OFF             → grey dashed border, inner <span> strikethrough (cross-browser safe)
+ *
+ * renderedTypes re-read fresh per click — no stale closure bug.
  */
 function _buildGraphTypeFilters() {
   const filterRow = document.getElementById('graph-type-filters');
@@ -2647,59 +2679,69 @@ function _buildGraphTypeFilters() {
   // Remove old chips (keep the "Filter:" label)
   filterRow.querySelectorAll('.graph-filter-chip').forEach(c => c.remove());
 
-  // Get types currently in the graph (not all types in DB)
-  const presentTypes = getActiveNodeTypes(); // Set<string> of type keys in _nodes
-  if (presentTypes.size === 0) return;
+  if (_graphAllTypes.length === 0) return;
 
-  const allTypes = getAllEntityTypes();
-  const typesInGraph = allTypes.filter(cfg => presentTypes.has(cfg.key));
+  for (const cfg of _graphAllTypes) {
+    const isOn     = _graphTypeFilters.has(cfg.key);
+    const hasNodes = getActiveNodeTypes().has(cfg.key);  // fresh read, not stale closure
 
-  // Initialize filters — all types ON
-  _graphTypeFilters = new Set(typesInGraph.map(c => c.key));
-
-  for (const cfg of typesInGraph) {
     const chip = document.createElement('button');
-    chip.className = 'graph-filter-chip';
+    chip.className       = 'graph-filter-chip';
     chip.dataset.typeKey = cfg.key;
-    chip.style.cssText = `
-      display: inline-flex; align-items: center; gap: 3px;
-      padding: 2px 8px; border-radius: 99px;
-      font-size: 10px; cursor: pointer;
-      border: 1.5px solid ${cfg.color};
-      background: ${cfg.color}22;
-      color: ${cfg.color};
-      font-weight: 600;
-      transition: all 0.15s ease;
-      line-height: 1.4;
-    `;
-    chip.textContent = `${cfg.icon} ${cfg.labelPlural || cfg.label}`;
-    chip.title = `Toggle ${cfg.labelPlural || cfg.label}`;
 
-    const setActive = (active) => {
-      if (active) {
-        chip.style.background = cfg.color + '22';
-        chip.style.color = cfg.color;
-        chip.style.borderColor = cfg.color;
-        chip.style.opacity = '1';
+    // Inner span so text-decoration works on inline-flex buttons (cross-browser)
+    const label = document.createElement('span');
+    label.textContent = `${cfg.icon} ${cfg.labelPlural || cfg.label}`;
+    chip.appendChild(label);
+
+    const applyChipStyle = (on, nodes) => {
+      if (on) {
+        chip.style.cssText = `
+          display: inline-flex; align-items: center;
+          padding: 2px 8px; border-radius: 99px;
+          font-size: 10px; cursor: pointer; font-weight: 600;
+          border: 1.5px solid ${cfg.color};
+          background: ${cfg.color}22; color: ${cfg.color};
+          transition: background 0.18s, opacity 0.18s; line-height: 1.4;
+          opacity: ${nodes ? '1' : '0.5'};
+        `;
+        label.style.cssText = 'text-decoration: none;';
+        chip.title = nodes
+          ? `Hide ${cfg.labelPlural || cfg.label}`
+          : `Hide ${cfg.labelPlural || cfg.label} (no entities yet)`;
       } else {
-        chip.style.background = 'transparent';
-        chip.style.color = 'var(--color-text-muted)';
-        chip.style.borderColor = 'var(--color-border)';
-        chip.style.opacity = '0.5';
+        chip.style.cssText = `
+          display: inline-flex; align-items: center;
+          padding: 2px 8px; border-radius: 99px;
+          font-size: 10px; cursor: pointer; font-weight: 500;
+          border: 1.5px dashed var(--color-border);
+          background: var(--color-surface); color: var(--color-text-muted);
+          transition: background 0.18s, opacity 0.18s; line-height: 1.4;
+          opacity: 0.65;
+        `;
+        label.style.cssText = `
+          text-decoration: line-through;
+          text-decoration-color: var(--color-text-muted);
+          text-decoration-thickness: 1.5px;
+        `;
+        chip.title = `Re-enable ${cfg.labelPlural || cfg.label}`;
       }
     };
-    setActive(true);
+
+    applyChipStyle(isOn, hasNodes);
 
     chip.addEventListener('click', () => {
-      const isOn = _graphTypeFilters.has(cfg.key);
-      if (isOn && _graphTypeFilters.size <= 1) return; // can't turn off last
-      if (isOn) _graphTypeFilters.delete(cfg.key);
-      else      _graphTypeFilters.add(cfg.key);
-      setActive(!isOn);
-      // [minor] Fix: after rebuilding with new filter, refresh chips to reflect actual graph nodes
-      setActiveTypes(new Set(_graphTypeFilters)).then(() => {
-        setTimeout(() => _buildGraphTypeFilters(), 80);
-      });
+      const nowOn = _graphTypeFilters.has(cfg.key);
+      if (nowOn && _graphTypeFilters.size <= 1) return; // keep at least one
+
+      if (nowOn) _graphTypeFilters.delete(cfg.key);
+      else       _graphTypeFilters.add(cfg.key);
+
+      // Fresh read at click time — not the stale hasNodes from build time
+      applyChipStyle(!nowOn, getActiveNodeTypes().has(cfg.key));
+
+      // Rebuild graph with updated type set
+      setActiveTypes(new Set(_graphTypeFilters));
     });
 
     filterRow.appendChild(chip);

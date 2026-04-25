@@ -237,6 +237,16 @@ export function getActiveNodeTypes() {
   return types;
 }
 
+/**
+ * Return the full universe of graphVisible type keys regardless of current filter.
+ * [minor] Used at graph-open time so toggled-off chips don't disappear from filter bar.
+ * @returns {Set<string>}
+ */
+export function getAllGraphVisibleTypes() {
+  const allTypes = getAllEntityTypes();
+  return new Set(allTypes.filter(t => t.graphVisible).map(t => t.key));
+}
+
 // ══════════════════════════════════════════════════════════════
 // BUILD PIPELINE
 // ══════════════════════════════════════════════════════════════
