@@ -3,9 +3,9 @@
  * Daily Review view — renders into #view-daily when view="daily"
  *
  * Sections (all collapsible):
- *   1. Daily Notes      — notes connected to this date's Daily Review entity; open by default
- *   2. Tasks            — due today or overdue (status != Done/done), sorted overdue-first then priority; open by default
- *   3. Events           — events whose date falls on today
+ *   1. Tasks            — due today or overdue (status != Done/done), sorted overdue-first then priority; open by default
+ *   2. Events           — events whose date falls on today
+ *   3. Daily Notes      — notes connected to this date's Daily Review entity; open by default
  *   4. Wall Posts       — post entities created today
  *   5. Reminders        — appointment entities with reminder=true and date = today
  *   6. Birthdays/Dates  — dateEntity records whose month+day = today
@@ -38,15 +38,15 @@ const SS_PREFIX = 'fh_daily_section_';
 
 /** Default open state per section key */
 const SECTION_DEFAULTS = {
-  'notes':        true,
-  'tasks':        true,
-  'events':       false,
+  'tasks':        true,   // always open — primary work list
+  'events':       true,   // open — events today are critical
+  'notes':        true,   // open — quick notes
+  'reminders':    true,   // open — appointment reminders are important
   'wall-posts':   false,
+  'birthdays':    false,  // forced open at render time if matching dateEntities exist today
+  'meals':        false,
   'comments':     false,
   'activity':     false,
-  'reminders':    false,
-  'birthdays':    false,
-  'meals':        false,
 };
 
 // ── Module state ──────────────────────────────────────────── //
@@ -1214,7 +1214,7 @@ function _openNoteModal(entity) {
 }
 
 /**
- * Section 2: Tasks — due today or overdue, sorted overdue-first then priority.
+ * Section 1: Tasks — due today or overdue, sorted overdue-first then priority.
  * personMap and projectMap resolve relation IDs to display names.
  */
 async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
@@ -1298,7 +1298,7 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
 }
 
 /**
- * Section 3: Events — events whose date = today.
+ * Section 2: Events — events whose date = today.
  */
 function _renderEvents(container, dateStr, events) {
   const filtered = _filterEvents(events, dateStr)
@@ -2178,29 +2178,32 @@ async function renderDaily(params = {}) {
     sections.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-3);';
     viewEl.appendChild(sections);
 
-    // ── Section 1: Notes (always first) ─────────────────────
-    await _renderDailyNotes(sections, dateStr);
-    sectionRefs.notesBody = sections.querySelector('#daily-section-body-notes');
-
-    // ── Section 2: Tasks (always second) ────────────────────
+    // ── Section 1: Tasks (always first) ────────────────────
     await _renderTasks(sections, dateStr, tasks, personMap, projectMap);
     sectionRefs.tasksBody = sections.querySelector('#daily-section-body-tasks');
 
-    // ── Sections 3–N: dynamic order — non-empty before empty ─
+    // ── Section 2: Events (always second) ───────────────────
+    _renderEvents(sections, dateStr, events);
+
+    // ── Section 3: Notes (always third) ─────────────────────
+    await _renderDailyNotes(sections, dateStr);
+    sectionRefs.notesBody = sections.querySelector('#daily-section-body-notes');
+
+    // ── Sections 4–N: dynamic order — non-empty before empty ─
     // Pre-compute filtered data for each section to determine emptiness.
-    const filteredEvents      = _filterEvents(events, dateStr);
     const filteredPosts       = _filterWallPosts(posts, dateStr);
     const filteredReminders   = _filterReminders(appointments, dateStr);
     const filteredBirthdays   = _filterDateEntities(dateEntities, _currentDate);
     const filteredMeals       = _filterMeals(mealPlans, dateStr);
     const filteredComments    = _filterComments(allComments, dateStr);
 
+    // Birthday auto-open: always write the correct open/closed state for this specific
+    // date so navigating between dates (birthday → non-birthday) resets correctly.
+    // Open when matching dateEntities exist; explicitly close when none.
+    _setSectionOpen('birthdays', filteredBirthdays.length > 0);
+
     // Each entry: { isEmpty, render }
     const dynamicSections = [
-      {
-        isEmpty: filteredEvents.length === 0,
-        render:  () => _renderEvents(sections, dateStr, events),
-      },
       {
         isEmpty: filteredPosts.length === 0,
         render:  () => _renderWallPosts(sections, dateStr, posts, personMap, accountMap),
