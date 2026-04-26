@@ -19,6 +19,7 @@ import { registerView }                         from '../core/router.js';
 import { getEntitiesByType, getEdgesFrom,
          saveEntity }                            from '../core/db.js';
 import { emit, on, EVENTS }                      from '../core/events.js';
+import { openEditForm }                           from '../components/entity-form.js';
 import { getAccount }                            from '../core/auth.js';
 
 // ── Constants ─────────────────────────────────────────────── //
@@ -438,9 +439,21 @@ function _buildCard(task) {
     </div>
   `;
 
-  // ── Click: open panel (but not when clicking checkbox) ──
+  // ── Click: title → edit form  |  rest of card → panel ──
+  // (Checkbox is handled separately below and stops propagation)
+  const titleSpan = card.querySelector('.kanban-card-title');
+  if (titleSpan) {
+    titleSpan.style.cssText += 'text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 2px; transition: text-decoration-color 0.15s;';
+    titleSpan.addEventListener('mouseenter', () => { titleSpan.style.textDecorationColor = 'var(--color-text-muted)'; });
+    titleSpan.addEventListener('mouseleave', () => { titleSpan.style.textDecorationColor = 'transparent'; });
+    titleSpan.addEventListener('click', (e) => {
+      e.stopPropagation(); // prevent card click from also firing
+      openEditForm(task);
+    });
+  }
   card.addEventListener('click', (e) => {
     if (e.target.closest('.kanban-card-check-label')) return;
+    if (e.target.closest('.kanban-card-title')) return; // title has its own handler
     emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: task.id });
   });
 

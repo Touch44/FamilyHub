@@ -26,6 +26,7 @@
 import { registerView }              from '../core/router.js';
 import { getEntitiesByType, getEntity, saveEntity } from '../core/db.js';
 import { emit, on, EVENTS }         from '../core/events.js';
+import { openEditForm }              from '../components/entity-form.js';
 
 // ── Constants ─────────────────────────────────────────────── //
 
@@ -753,14 +754,18 @@ function _showDayPopover(anchorEl, dateObj, dateStr, items) {
         _makeDraggable(row, item.entityType, item.entity.id);
       }
 
-      // Click → open entity panel
+      // Click → task title opens edit form; other entity types open panel
       row.addEventListener('click', (e) => {
         e.stopPropagation();
         _closePopover();
-        emit(EVENTS.PANEL_OPENED, {
-          entityType: item.entityType,
-          entityId:   item.entity.id,
-        });
+        if (item.entityType === 'task') {
+          openEditForm(item.entity);
+        } else {
+          emit(EVENTS.PANEL_OPENED, {
+            entityType: item.entityType,
+            entityId:   item.entity.id,
+          });
+        }
       });
 
       list.appendChild(row);
@@ -1198,10 +1203,14 @@ function _placeWeekEvents(bodyEl, weekStart, dateMap) {
 
       block.addEventListener('click', (e) => {
         e.stopPropagation();
-        emit(EVENTS.PANEL_OPENED, {
-          entityType: item.entityType,
-          entityId:   item.entity.id,
-        });
+        if (item.entityType === 'task') {
+          openEditForm(item.entity);
+        } else {
+          emit(EVENTS.PANEL_OPENED, {
+            entityType: item.entityType,
+            entityId:   item.entity.id,
+          });
+        }
       });
 
       bodyEl.appendChild(block);
@@ -1294,11 +1303,16 @@ function _buildAgendaView(container, dateMap) {
         _makeDraggable(row, item.entityType, item.entity.id);
       }
 
+      // Task agenda rows open edit form; other entity types open panel
       row.addEventListener('click', () => {
-        emit(EVENTS.PANEL_OPENED, {
-          entityType: item.entityType,
-          entityId:   item.entity.id,
-        });
+        if (item.entityType === 'task') {
+          openEditForm(item.entity);
+        } else {
+          emit(EVENTS.PANEL_OPENED, {
+            entityType: item.entityType,
+            entityId:   item.entity.id,
+          });
+        }
       });
 
       itemList.appendChild(row);

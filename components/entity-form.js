@@ -1033,11 +1033,13 @@ async function _submitForm() {
     }
 
     // ── Callback & close ──────────────────────────────────── //
+    // Emit ENTITY_SAVED before the callback so listeners (panel, kanban, daily)
+    // update state first. The callback then has fresh data if it queries anything.
     const cb = _onSave;
+    const wasNew = !_editEntity;
     closeForm();
+    emit(EVENTS.ENTITY_SAVED, { entity: saved, isNew: wasNew });
     cb?.(saved);
-
-    emit(EVENTS.ENTITY_SAVED, { entity: saved, isNew: !_editEntity });
 
   } catch (err) {
     console.error('[entity-form] Save failed:', err);

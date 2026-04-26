@@ -26,6 +26,7 @@ import { registerView, navigate, VIEW_KEYS } from '../core/router.js';
 import { getEntitiesByType, getEntity, getSetting,
          saveEntity, saveEdge, getEdgesFrom }  from '../core/db.js';
 import { emit, on, EVENTS }                    from '../core/events.js';
+import { openEditForm }                         from '../components/entity-form.js';
 import { getAccount }                      from '../core/auth.js';
 
 // ── Constants ─────────────────────────────────────────────── //
@@ -852,20 +853,24 @@ function _prependCapturedItem(entity, type, dateStr, sectionRefs) {
     const row = document.createElement('div');
     row.className = 'daily-task-row';
     row.dataset.id = entity.id;
+    // Structure matches _buildTaskRow: only title span is clickable, not whole info div
     row.innerHTML = `
       <label class="daily-task-check-label" aria-label="Mark complete">
         <input type="checkbox" class="daily-task-checkbox" data-id="${entity.id}" aria-label="Complete task" />
       </label>
-      <div class="daily-task-info daily-task-info-clickable">
-        <span class="daily-task-title">${_esc(entity.title)}</span>
+      <div class="daily-task-info">
+        <div class="daily-task-info-clickable">
+          <span class="daily-task-title">${_esc(entity.title)}</span>
+        </div>
         <div class="daily-task-meta">
           <span class="badge badge-today">Today</span>
-          <span class="badge badge-prio badge-prio-medium">Medium</span>
+          ${entity.priority ? `<span class="badge badge-prio badge-prio-${(entity.priority||'').toLowerCase()}">${_esc(entity.priority)}</span>` : ''}
         </div>
       </div>
     `;
+    // Title click → full edit form (only title span, not meta badges)
     row.querySelector('.daily-task-info-clickable').addEventListener('click', () => {
-      emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: entity.id });
+      openEditForm(entity);
     });
     const cb = row.querySelector('.daily-task-checkbox');
     cb.addEventListener('change', async () => {
@@ -1295,8 +1300,9 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
       </div>
     `;
 
+    // Title click → full edit form (checklist add/delete, all fields)
     row.querySelector('.daily-task-info-clickable').addEventListener('click', () => {
-      emit(EVENTS.PANEL_OPENED, { entityType: 'task', entityId: task.id });
+      openEditForm(task);
     });
 
     const checkbox = row.querySelector('.daily-task-checkbox');
@@ -2318,6 +2324,24 @@ async function renderDaily(params = {}) {
 }
 
 // ── Registration ──────────────────────────────────────────── //
+
+// Refresh daily view when a relevant entity is saved (task, event, note, appointment, etc.)
+// Guard on types that actually appear in daily sections to avoid spurious re-renders.
+const _DAILY_REFRESH_TYPES = new Set([
+  'task','event','note','appointment','mealPlan','dateEntity','post','comment'
+]);
+let _dailyRefreshTimer = null;
+on(EVENTS.ENTITY_SAVED, ({ entity } = {}) => {
+  if (entity && !_DAILY_REFRESH_TYPES.has(entity.type)) return;
+  if (_dailyRefreshTimer) clearTimeout(_dailyRefreshTimer);
+  _dailyRefreshTimer = setTimeout(() => {
+    _dailyRefreshTimer = null;
+    const viewEl = document.getElementById('view-daily');
+    if (viewEl && viewEl.classList.contains('active')) {
+      renderDaily({ _internal: true });
+    }
+  }, 200);
+});
 
 registerView('daily', renderDaily);
 

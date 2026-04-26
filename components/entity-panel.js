@@ -552,11 +552,10 @@ function _renderHeader() {
     editBtn.style.cssText = 'font-size: 1rem;';
     editBtn.addEventListener('click', () => {
       if (!_entity) return;
-      openEditForm(_entity, (saved) => {
-        // Panel auto-refreshes via ENTITY_SAVED event listener.
-        // Re-render header too so title and action state stay in sync.
+      openEditForm(_entity, () => {
+        // ENTITY_SAVED listener already refreshed the tab body.
+        // Only header needs explicit refresh (action buttons, type badge, title).
         _renderHeader();
-        _renderActiveTab();
       });
     });
     toolbar.appendChild(editBtn);
