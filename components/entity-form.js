@@ -261,25 +261,19 @@ function _buildAndMount(config) {
   _rebuildBody(config, body);
 
   // ── Footer ───────────────────────────────────────────── //
+  // Single Save button — Cancel is redundant (✕ header, Esc, backdrop click all close).
+  // ⌘↩ hint lives as tooltip on the save button, not as visible footer text.
   const footer = document.createElement('div');
   footer.className = 'modal-footer';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className   = 'btn btn-secondary';
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.addEventListener('click', closeForm);
+  footer.style.cssText = 'padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); flex-shrink: 0;';
 
   const saveBtn = document.createElement('button');
   saveBtn.className   = 'btn btn-primary ef-save-btn';
   saveBtn.textContent = _editEntity ? 'Save changes' : `Create ${config.label}`;
+  saveBtn.title       = '⌘↩ to save';
+  saveBtn.style.cssText = 'width: 100%; justify-content: center;';
   saveBtn.addEventListener('click', _submitForm);
 
-  const hint = document.createElement('span');
-  hint.style.cssText  = 'font-size: var(--text-xs); color: var(--color-text-muted); margin-right: auto;';
-  hint.textContent    = '⌘↩ to save';
-
-  footer.appendChild(hint);
-  footer.appendChild(cancelBtn);
   footer.appendChild(saveBtn);
 
   modal.appendChild(header);
@@ -287,6 +281,21 @@ function _buildAndMount(config) {
   modal.appendChild(footer);
   _overlay.appendChild(modal);
   document.body.appendChild(_overlay);
+
+  // Inject richtext placeholder CSS once globally (data-placeholder attr drives content)
+  if (!document.getElementById('ef-richtext-placeholder-style')) {
+    const s = document.createElement('style');
+    s.id = 'ef-richtext-placeholder-style';
+    s.textContent = `
+      .ef-richtext-editor:empty:before {
+        content: attr(data-placeholder);
+        color: var(--color-text-muted);
+        pointer-events: none;
+        display: block;
+      }
+    `;
+    document.head.appendChild(s);
+  }
 
   // Focus the title field
   setTimeout(() => {
@@ -564,47 +573,17 @@ function _buildFieldControl(field, config) {
     }
 
     // ── RICHTEXT ─────────────────────────────────────────── //
+    // Toolbar removed: Ctrl+B/I/U work natively; toolbar buttons added noise
+    // without value (duplicated shortcuts, invisible on mobile native keyboard).
     case 'richtext': {
-      const wrap = document.createElement('div');
-
-      // Mini toolbar
-      const toolbar = document.createElement('div');
-      toolbar.style.cssText = `
-        display: flex; gap: var(--space-1); margin-bottom: var(--space-1);
-        padding: var(--space-1); background: var(--color-surface);
-        border: 1px solid var(--color-border); border-bottom: none;
-        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-      `;
-
-      const toolbarBtns = [
-        { cmd: 'bold',        label: '<b>B</b>',  title: 'Bold' },
-        { cmd: 'italic',      label: '<i>I</i>',  title: 'Italic' },
-        { cmd: 'insertUnorderedList', label: '• List', title: 'Bullet list' },
-      ];
-
-      for (const tb of toolbarBtns) {
-        const btn = document.createElement('button');
-        btn.type      = 'button';
-        btn.innerHTML = tb.label;
-        btn.title     = tb.title;
-        btn.style.cssText = 'padding: 2px var(--space-2); font-size: var(--text-xs); background: none; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; font-family: var(--font-body);';
-        btn.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          document.execCommand(tb.cmd, false, null);
-          editor.focus();
-        });
-        toolbar.appendChild(btn);
-      }
-
-      // Editor
       const editor = document.createElement('div');
       editor.id              = `ef-field-${field.key}`;
       editor.contentEditable = 'true';
       editor.className       = 'ef-richtext-editor';
       editor.style.cssText   = `
-        min-height: 100px; padding: var(--space-3);
+        min-height: 80px; padding: var(--space-3);
         border: 1px solid var(--color-border);
-        border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+        border-radius: var(--radius-sm);
         font-size: var(--text-sm); line-height: var(--leading-relaxed);
         outline: none; color: var(--color-text);
         background: var(--color-bg);
@@ -614,11 +593,9 @@ function _buildFieldControl(field, config) {
       editor.setAttribute('aria-multiline', 'true');
       editor.setAttribute('aria-label', field.label);
       editor.setAttribute('spellcheck', 'true');
+      editor.dataset.placeholder = `${field.label}… (Ctrl+B bold, Ctrl+I italic)`;
 
-      if (existing) editor.textContent = existing;
-      else {
-        editor.dataset.placeholder = `Enter ${field.label.toLowerCase()}…`;
-      }
+      if (existing) editor.innerHTML = existing;
 
       editor.addEventListener('focus', () => {
         editor.style.borderColor = 'var(--color-accent)';
@@ -627,19 +604,16 @@ function _buildFieldControl(field, config) {
       editor.addEventListener('blur', () => {
         editor.style.borderColor = 'var(--color-border)';
         editor.style.boxShadow   = 'none';
-        _draft[field.key] = editor.textContent.trim() || null;
+        _draft[field.key] = editor.innerHTML.trim() || null;
       });
       editor.addEventListener('input', () => {
-        _draft[field.key] = editor.textContent.trim() || null;
+        _draft[field.key] = editor.innerHTML.trim() || null;
       });
 
-      wrap.appendChild(toolbar);
-      wrap.appendChild(editor);
-      return wrap;
+      return editor;
     }
 
     // ── CHECKLIST ────────────────────────────────────────── //
-    // ── CHECKLIST ──────────────────────────────────────────────────── //
     case 'checklist': {
       // Deep-copy existing items so draft mutations don’t affect the entity object
       let items = Array.isArray(existing) ? existing.map(it => ({ ...it })) : [];
@@ -1120,10 +1094,10 @@ function _saveDraftFromForm() {
     }
   }
 
-  // Sync richtext editors
+  // Sync richtext editors (innerHTML preserves bold/italic/lists applied via Ctrl+B/I)
   _overlay.querySelectorAll('.ef-richtext-editor').forEach(ed => {
     const key = ed.closest('[data-field]')?.dataset.field;
-    if (key) _draft[key] = ed.textContent.trim() || null;
+    if (key) _draft[key] = ed.innerHTML.trim() || null;
   });
 }
 
