@@ -1261,6 +1261,13 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
     const projectName  = task.project    ? (projectMap.get(task.project)   || null) : null;
     const assigneeName = task.assignedTo ? (personMap.get(task.assignedTo) || null) : null;
 
+    // Checklist progress (compute done count once to avoid double filter)
+    const cl = Array.isArray(task.checklist) ? task.checklist : [];
+    const clDone = cl.filter(i => i.done).length;
+    const clHtml = cl.length
+      ? `<span class="daily-task-checklist-prog" title="${clDone} of ${cl.length} items done">${clDone}/${cl.length}</span>`
+      : '';
+
     const dueBadge = isOverdue
       ? `<span class="badge badge-danger daily-overdue-label" title="Overdue">${_esc(_daysOverdue(due))}</span>`
       : `<span class="badge badge-today">Today</span>`;
@@ -1274,8 +1281,11 @@ async function _renderTasks(container, dateStr, tasks, personMap, projectMap) {
         <input type="checkbox" class="daily-task-checkbox"
                data-id="${task.id}" aria-label="Complete task" />
       </label>
-      <div class="daily-task-info daily-task-info-clickable">
-        <span class="daily-task-title ${prioClass}">${_esc(task.title || 'Untitled')}</span>
+      <div class="daily-task-info">
+        <div class="daily-task-info-clickable">
+          <span class="daily-task-title ${prioClass}">${_esc(task.title || 'Untitled')}</span>
+        </div>
+        ${clHtml}
         <div class="daily-task-meta">
           ${projectName  ? `<span class="chip chip-project" title="Project">📁 ${_esc(projectName)}</span>` : ''}
           ${assigneeName ? `<span class="chip chip-assignee" title="Assigned to">${_esc(_firstInitial(assigneeName))} ${_esc(assigneeName)}</span>` : ''}
@@ -1906,6 +1916,7 @@ function _injectStyles() {
     .daily-task-info-clickable { cursor: pointer; }
     .daily-task-info-clickable:hover .daily-task-title { color: var(--color-accent); }
     .daily-task-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--color-text); }
+    .daily-task-checklist-prog { font-size: 11px; color: var(--color-text-muted); margin: 1px 0; }
     .daily-task-meta { display: flex; flex-wrap: wrap; gap: var(--space-1-5); align-items: center; }
 
     /* Priority colour accents on title */

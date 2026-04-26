@@ -1164,6 +1164,82 @@ function _renderFieldValue(wrap, field) {
       break;
     }
 
+    // ── CHECKLIST ────────────────────────────────────────── //
+    case 'checklist': {
+      const items = Array.isArray(value) ? value : [];
+
+      if (!items.length) {
+        const empty = document.createElement('span');
+        empty.textContent = 'No items — open form to add';
+        empty.style.cssText = 'font-size:var(--text-sm);color:var(--color-text-muted);';
+        wrap.appendChild(empty);
+        break;
+      }
+
+      const list = document.createElement('div');
+      list.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-1-5);';
+
+      // Live-updating progress counter — updated on each toggle without re-render
+      const prog = document.createElement('div');
+      prog.style.cssText = 'font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-1);';
+      const _updateProg = () => {
+        const doneCount = (Array.isArray(_entity[field.key]) ? _entity[field.key] : [])
+          .filter(it => it.done).length;
+        prog.textContent = `${doneCount}/${items.length} completed`;
+      };
+      _updateProg();
+
+      items.forEach((item, i) => {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:var(--space-2);cursor:pointer;';
+
+        const cb = document.createElement('input');
+        cb.type    = 'checkbox';
+        cb.checked = !!item.done;
+        cb.style.cssText = 'width:15px;height:15px;flex-shrink:0;accent-color:var(--color-accent);cursor:pointer;';
+
+        const txt = document.createElement('span');
+        txt.textContent = item.text || '(empty)';
+        txt.style.cssText = 'font-size:var(--text-sm);'
+          + (item.done
+            ? 'text-decoration:line-through;color:var(--color-text-muted);'
+            : 'color:var(--color-text);');
+
+        cb.addEventListener('change', async () => {
+          // Guard: item may not exist if entity was updated externally
+          const current = Array.isArray(_entity[field.key]) ? _entity[field.key] : [];
+          if (!current[i]) return;
+          // Optimistic update
+          const updated = current.map((it, idx) =>
+            idx === i ? { ...it, done: cb.checked } : it
+          );
+          _entity[field.key] = updated;
+          txt.style.textDecoration = cb.checked ? 'line-through' : 'none';
+          txt.style.color = cb.checked ? 'var(--color-text-muted)' : 'var(--color-text)';
+          _updateProg(); // keep progress counter live
+          try {
+            await _save();
+          } catch (err) {
+            // Revert on failure
+            cb.checked = !cb.checked;
+            const reverted = (Array.isArray(_entity[field.key]) ? _entity[field.key] : [])
+              .map((it, idx) => idx === i ? { ...it, done: cb.checked } : it);
+            _entity[field.key] = reverted;
+            txt.style.textDecoration = cb.checked ? 'line-through' : 'none';
+            txt.style.color = cb.checked ? 'var(--color-text-muted)' : 'var(--color-text)';
+            _updateProg();
+          }
+        });
+
+        row.append(cb, txt);
+        list.appendChild(row);
+      });
+
+      wrap.appendChild(list);
+      wrap.appendChild(prog);
+      break;
+    }
+
     // ── RICHTEXT ────────────────────────────────────────── //
     case 'richtext': {
       const display = document.createElement('div');

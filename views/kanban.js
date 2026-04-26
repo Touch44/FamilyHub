@@ -411,6 +411,13 @@ function _buildCard(task) {
     ? `<span class="kanban-card-blocker" title="Blocked by another task">🚫</span>`
     : '';
 
+  // Checklist progress
+  const cl = Array.isArray(task.checklist) ? task.checklist : [];
+  const clDone = cl.filter(i => i.done).length;
+  const clProgress = cl.length
+    ? `<span class="kanban-card-checklist-prog" title="${clDone} of ${cl.length} items done">${clDone}/${cl.length}</span>`
+    : '';
+
   card.innerHTML = `
     <div class="kanban-card-top">
       <label class="kanban-card-check-label">
@@ -420,6 +427,7 @@ function _buildCard(task) {
       ${prioDot}
       ${blockerEl}
     </div>
+    ${clProgress}
     ${projChip}
     <div class="kanban-card-bottom">
       <div class="kanban-card-tags">${tagHtml}</div>
@@ -914,6 +922,12 @@ function _injectStyles() {
       flex: 1;
       word-break: break-word;
       line-height: 1.35;
+    }
+    .kanban-card-checklist-prog {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      margin: 2px 0 0 2px;
+      display: block;
     }
     .kanban-card-prio-dot {
       width: 8px; height: 8px;

@@ -631,6 +631,96 @@ function _buildFieldControl(field, config) {
       return wrap;
     }
 
+    // ── CHECKLIST ────────────────────────────────────────── //
+    // ── CHECKLIST ──────────────────────────────────────────────────── //
+    case 'checklist': {
+      // Deep-copy existing items so draft mutations don’t affect the entity object
+      let items = Array.isArray(existing) ? existing.map(it => ({ ...it })) : [];
+      _draft[field.key] = items.length ? [...items] : null;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'ef-checklist-wrap';
+      wrap.style.cssText = 'display:flex;flex-direction:column;gap:var(--space-1-5);';
+
+      function _genId() {
+        return Math.random().toString(36).slice(2, 10);
+      }
+
+      function _syncDraft() {
+        // Store a shallow-copy array so save reads correct state
+        _draft[field.key] = items.length ? items.map(it => ({ ...it })) : null;
+      }
+
+      // Build the Add button once — re-append on each _renderItems, never recreate
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'ef-checklist-add btn btn-ghost btn-sm';
+      addBtn.style.cssText = 'align-self:flex-start;margin-top:var(--space-1);font-size:var(--text-xs);';
+      addBtn.textContent = '+ Add item';
+      addBtn.addEventListener('click', () => {
+        items.push({ id: _genId(), text: '', done: false });
+        _syncDraft();
+        _renderItems();
+        const inputs = wrap.querySelectorAll('input[type="text"]');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      });
+
+      function _renderItems() {
+        wrap.innerHTML = '';
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:var(--space-1-5);';
+
+          const cb = document.createElement('input');
+          cb.type    = 'checkbox';
+          cb.checked = !!item.done;
+          cb.style.cssText = 'width:15px;height:15px;flex-shrink:0;accent-color:var(--color-accent);cursor:pointer;';
+
+          const txt = document.createElement('input');
+          txt.type        = 'text';
+          txt.value       = item.text || '';
+          txt.className   = 'input';
+          txt.placeholder = 'Item text…';
+          txt.style.cssText = 'flex:1;padding:var(--space-1) var(--space-2);font-size:var(--text-sm);'
+            + (item.done ? 'text-decoration:line-through;color:var(--color-text-muted);' : '');
+
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.textContent = '×';
+          del.title = 'Remove item';
+          del.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--color-text-muted);font-size:var(--text-lg);line-height:1;padding:0 var(--space-1);flex-shrink:0;';
+
+          // IIFE captures stable idx — prevents classic for-loop closure bug where all
+          // event handlers would reference the final value of i after the loop ends.
+          (function(idx) {
+            cb.addEventListener('change', () => {
+              items[idx].done = cb.checked;
+              txt.style.textDecoration = cb.checked ? 'line-through' : 'none';
+              txt.style.color = cb.checked ? 'var(--color-text-muted)' : 'var(--color-text)';
+              _syncDraft();
+            });
+            txt.addEventListener('input', () => {
+              items[idx].text = txt.value;
+              _syncDraft();
+            });
+            del.addEventListener('click', () => {
+              items.splice(idx, 1);
+              _syncDraft();
+              _renderItems();
+            });
+          })(i);
+
+          row.append(cb, txt, del);
+          wrap.appendChild(row);
+        }
+        wrap.appendChild(addBtn); // stable node re-appended each render
+      }
+
+      _renderItems();
+      return wrap;
+    }
+
     // ── TAGS (multiselect with chip + create) ─────────────── //
     case 'tags':
     case 'multiselect': {
@@ -999,7 +1089,7 @@ function _saveDraftFromForm() {
   if (!config) return;
 
   for (const field of config.fields) {
-    if (['relation', 'tags', 'multiselect', 'richtext', 'checkbox'].includes(field.type)) continue;
+    if (['relation', 'tags', 'multiselect', 'richtext', 'checkbox', 'checklist'].includes(field.type)) continue;
 
     const el = _overlay.querySelector(`#ef-field-${field.key}`);
     if (!el) continue;
