@@ -195,6 +195,13 @@ function _buildAndMount(config) {
   typeSelect.className  = 'select ef-type-select';
   typeSelect.style.cssText = 'width: auto; padding: var(--space-1) var(--space-2); font-size: var(--text-sm); border-color: transparent; background: var(--color-surface-2); cursor: pointer;';
   typeSelect.setAttribute('aria-label', 'Entity type');
+  // In edit mode the type is fixed — switching type discards all field data
+  if (_editEntity) {
+    typeSelect.disabled = true;
+    typeSelect.title    = 'Use Convert to change entity type';
+    typeSelect.style.opacity = '0.6';
+    typeSelect.style.cursor  = 'not-allowed';
+  }
 
   const allTypes = getAllEntityTypes();
   for (const t of allTypes) {
@@ -732,6 +739,14 @@ function _buildFieldControl(field, config) {
 
     // ── RELATION (search-as-you-type) ─────────────────────── //
     case 'relation': {
+      // In edit mode, relations are managed from the panel's Relations tab.
+      // Show a read-only info note so users know where to go.
+      if (_editEntity) {
+        const note = document.createElement('span');
+        note.style.cssText = 'font-size:var(--text-xs);color:var(--color-text-muted);display:block;padding:var(--space-1) 0;';
+        note.textContent = 'Manage links from the Relations tab in the panel';
+        return note;
+      }
       if (!_relationValues.has(field.key)) {
         _relationValues.set(field.key, []);
       }

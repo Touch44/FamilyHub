@@ -14,6 +14,7 @@ import { getEntity, saveEntity, deleteEntity, getEdgesFrom, getEdgesTo,
 import { getEntityTypeConfig, getAllEntityTypes,
          getNeighbors, convertEntity } from '../core/graph-engine.js';
 import { on, emit, EVENTS } from '../core/events.js';
+import { openEditForm }     from './entity-form.js';
 import { initGraph, destroyGraph, setFocusId, refreshGraph, setActiveTypes, getActiveNodeTypes } from './graph-canvas.js';
 import { navigate, VIEW_KEYS } from '../core/router.js';
 
@@ -539,6 +540,26 @@ function _renderHeader() {
       _renderActiveTab();
     });
     toolbar.appendChild(btn);
+  }
+
+  // ── Edit button: opens full entity-form for editing all fields ─
+  if ((_config.actions || []).includes('edit')) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'panel-icon-btn panel-edit-btn';
+    editBtn.title = 'Edit all fields';
+    editBtn.setAttribute('aria-label', 'Edit entity');
+    editBtn.textContent = '✎';
+    editBtn.style.cssText = 'font-size: 1rem;';
+    editBtn.addEventListener('click', () => {
+      if (!_entity) return;
+      openEditForm(_entity, (saved) => {
+        // Panel auto-refreshes via ENTITY_SAVED event listener.
+        // Re-render header too so title and action state stay in sync.
+        _renderHeader();
+        _renderActiveTab();
+      });
+    });
+    toolbar.appendChild(editBtn);
   }
 
   // ── Graph: direct-action button (opens graph view immediately) ──
